@@ -6,6 +6,7 @@ import type { SVGAttributes } from 'svelte/elements';
 import {
 	ApiKeyIcon,
 	UsersIcon,
+	CommunityIcon,
 	LockIcon,
 	NotificationsIcon,
 	DashboardIcon,
@@ -26,7 +27,6 @@ import {
 	HammerIcon,
 	TemplateIcon,
 	GlobeIcon,
-	UpdateIcon,
 	VariableIcon,
 	ActivityIcon,
 	BackupIcon,
@@ -43,11 +43,13 @@ import {
 import { m } from '#lib/paraglide/messages.js';
 import { environmentStore } from '#lib/stores/environment.store.svelte.js';
 import { featureStore } from '#lib/stores/features.store.svelte.js';
+import userStore from '#lib/stores/user-store.svelte.js';
 import type { FeatureID } from '#lib/types/features.js';
 import type { PodmanStatus } from '#lib/types/podman.js';
 import type { PermissionsManifest } from '#lib/types/role.js';
 import type { User } from '#lib/types/user.js';
 import { canReachShownAccessSurface, userHasAnyAccess } from '#lib/utils/auth.js';
+import { browsableEnvironmentGroups } from '#lib/utils/environments.js';
 import type { ShortcutKey } from '#lib/utils/navigation.js';
 
 export type NavigationItem = {
@@ -76,13 +78,6 @@ export const navigationItems: NavigationSections = {
 			url: resolve('/(app)/dashboard'),
 			icon: DashboardIcon,
 			shortcut: ['mod', '1']
-		},
-		{
-			title: m.updates(),
-			url: resolve('/(app)/updates'),
-			icon: UpdateIcon,
-			shortcut: ['mod', 'u'],
-			accessSurfaceId: 'route.updates'
 		},
 		{
 			title: m.security(),
@@ -138,6 +133,16 @@ export const navigationItems: NavigationSections = {
 		}
 	],
 	resourceItems: [
+		{
+			title: m.environments(),
+			url: resolve('/(app)/environments'),
+			icon: EnvironmentsIcon,
+			accessSurfaceId: 'route.environments.browse',
+			// A getter keeps the children in step with the live environment list.
+			get items() {
+				return environmentNavigationItems();
+			}
+		},
 		{
 			title: m.containers(),
 			url: resolve('/(app)/containers'),
@@ -208,12 +213,6 @@ export const navigationItems: NavigationSections = {
 			url: resolve('/(app)/podman/secrets'),
 			icon: LockIcon,
 			accessSurfaceId: 'route.podman.secrets'
-		},
-		{
-			title: m.auto_update(),
-			url: resolve('/(app)/podman/autoupdate'),
-			icon: UpdateIcon,
-			accessSurfaceId: 'route.podman.autoupdate'
 		}
 	],
 	adminItems: [
@@ -334,6 +333,12 @@ export const navigationItems: NavigationSections = {
 					accessSurfaceId: 'settings.category.roles'
 				},
 				{
+					title: m.user_groups(),
+					url: resolve('/(app)/system/user-groups'),
+					icon: CommunityIcon,
+					accessSurfaceId: 'settings.category.usergroups'
+				},
+				{
 					title: m.branding(),
 					url: resolve('/(app)/system/branding'),
 					icon: PaletteIcon,
@@ -360,6 +365,15 @@ for (const parent of navigationItems.adminItems) {
 	if (parent.url === resolve('/(app)/settings') || parent.url === resolve('/(app)/system')) {
 		parent.items?.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
 	}
+}
+
+function environmentNavigationItems(): NavigationItem[] {
+	return browsableEnvironmentGroups().map((group) => ({
+		title: group.name,
+		url: resolve('/(app)/environments/[groupId]', { groupId: group.id }),
+		icon: EnvironmentsIcon,
+		accessSurfaceId: 'route.environments.group'
+	}));
 }
 
 export function filterByPermissions(
@@ -452,13 +466,26 @@ export function getPodmanNavigationItems(statuses: Record<string, PodmanStatus>)
 	);
 }
 
+const allEnvironmentsResourceUrls: ResolvedPathname[] = [
+	resolve('/(app)/containers'),
+	resolve('/(app)/images'),
+	resolve('/(app)/networks'),
+	resolve('/(app)/volumes')
+];
+
+// Environment-first navigation drops the all-environments pages from menus; they stay reachable by URL.
+export function getResourceNavigationItems(): NavigationItem[] {
+	if (!userStore.current?.preferences?.environmentFirstNavigation) return navigationItems.resourceItems;
+	return navigationItems.resourceItems.filter((item) => !allEnvironmentsResourceUrls.includes(item.url));
+}
+
 export const DEFAULT_LANDING_PAGE = resolve('/(app)/dashboard');
 
 export function getLandingPageNavItems(): NavigationItem[] {
 	return [
 		...navigationItems.overviewItems,
 		...navigationItems.deployItems,
-		...navigationItems.resourceItems,
+		...getResourceNavigationItems(),
 		...navigationItems.adminItems.filter((item) => !item.items)
 	];
 }
@@ -475,7 +502,7 @@ export function getAvailableMobileNavItems(options?: {
 	accessManifest?: PermissionsManifest | null;
 }): NavigationItem[] {
 	const flatItems: NavigationItem[] = [];
-	flatItems.push(...navigationItems.overviewItems, ...navigationItems.deployItems, ...navigationItems.resourceItems);
+	flatItems.push(...navigationItems.overviewItems, ...navigationItems.deployItems, ...getResourceNavigationItems());
 
 	const swarmItems = getSwarmNavigationItems(options?.swarmEnabled);
 	if (swarmItems.length > 0) {

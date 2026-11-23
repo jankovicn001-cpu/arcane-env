@@ -9,9 +9,7 @@ type (
 		EnvironmentHealthInterval      string `json:"environmentHealthInterval" required:"false"`
 		EventCleanupInterval           string `json:"eventCleanupInterval" required:"false"`
 		ExpiredSessionsCleanupInterval string `json:"expiredSessionsCleanupInterval" required:"false"`
-		AutoUpdateInterval             string `json:"autoUpdateInterval" required:"false"`
 		DockerClientRefreshInterval    string `json:"dockerClientRefreshInterval" required:"false"`
-		PollingInterval                string `json:"pollingInterval" required:"false"`
 		ScheduledPruneInterval         string `json:"scheduledPruneInterval" required:"false"`
 		VulnerabilityScanInterval      string `json:"vulnerabilityScanInterval" required:"false"`
 		ImageAutoPatchInterval         string `json:"imageAutoPatchInterval" required:"false"`

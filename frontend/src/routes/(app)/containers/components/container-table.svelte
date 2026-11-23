@@ -18,7 +18,6 @@
 	import { PortBadge } from '#lib/components/badges/index.js';
 	import IconImage from '#lib/components/icon-image.svelte';
 	import IfPermitted from '#lib/components/if-permitted.svelte';
-	import ImageUpdateItem from '#lib/components/image-update-item.svelte';
 	import ResourceName from '#lib/components/resource-name.svelte';
 	import { EmptyState } from '#lib/components/states/index.js';
 	import * as Alert from '#lib/components/ui/alert/index.js';
@@ -38,7 +37,6 @@
 		NetworksIcon,
 		ProjectsIcon,
 		InspectIcon,
-		UpdateIcon,
 		RedeployIcon,
 		PauseIcon,
 		ZapIcon,
@@ -48,16 +46,14 @@
 	} from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import { queryKeys } from '#lib/query/query-keys.js';
-	import { activityStore } from '#lib/stores/activity.store.svelte.js';
 	import settingsStore from '#lib/stores/config-store.svelte.js';
-	import { environmentStore } from '#lib/stores/environment.store.svelte.js';
+	import { environmentStore, type EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
 	import type { ContainerPaginatedResponse, ContainerSummary } from '#lib/types/container.js';
 	import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 	import { hasPermission } from '#lib/utils/auth.js';
 	import { hasAnyLoadingState } from '#lib/utils/bulk-actions.js';
-	import { createContainerUpdateActivityTracker } from '#lib/utils/container-update-activities.js';
-	import { COMPOSE_PROJECT_LABEL, getContainerIpAddresses, getThemedIconUrl, parseImageRef } from '#lib/utils/docker.js';
-	import { type EnvironmentPage, type EnvironmentRow, hasShownPermission, listScopes, rowKey } from '#lib/utils/environments.js';
+	import { COMPOSE_PROJECT_LABEL, getContainerIpAddresses, getThemedIconUrl } from '#lib/utils/docker.js';
+	import { type EnvironmentPage, type EnvironmentRow, hasShownPermission, rowKey } from '#lib/utils/environments.js';
 	import { formatDateTimeShort } from '#lib/utils/formatting.js';
 	import { quadletUnitHref } from '#lib/utils/podman.js';
 
@@ -85,6 +81,8 @@
 
 	let {
 		scope,
+		environments,
+		persistKey = 'arcane-container-table',
 		containers,
 		selectedIds = $bindable(),
 		requestOptions = $bindable(),
@@ -94,8 +92,11 @@
 		onRetry,
 		refreshError
 	}: {
-		/** Shown-environments scope the rows were loaded for. */
+		/** Environments scope the rows were loaded for. */
 		scope: string;
+		/** Environments the table covers; defaults to every shown environment. */
+		environments?: EnvironmentRef[];
+		persistKey?: string;
 		containers: ContainerPage;
 		selectedIds: string[];
 		requestOptions: SearchPaginationSortRequest;
@@ -112,28 +113,16 @@
 		start: false,
 		stop: false,
 		restart: false,
-		remove: false,
-		update: false
+		remove: false
 	});
+
+	const tableEnvironments = $derived(environments ?? environmentStore.shown);
+	const environmentsKey = $derived(tableEnvironments.map((env) => env.id).join(','));
+	// A table pinned to one environment needs no environment column or facet.
+	const showEnvironmentColumn = $derived(environments === undefined || environments.length > 1);
 
 	const statsManager = new ContainerStatsManager();
 	const queryClient = useQueryClient();
-	let updateTableMounted = false;
-	const updateActivities = createContainerUpdateActivityTracker(
-		() => environmentStore.shown.map((env) => env.id),
-		() => {
-			if (!updateTableMounted || scope !== environmentStore.shownKey) return;
-			for (const listScope of listScopes(environmentStore.shown.map((env) => env.id))) {
-				void queryClient.invalidateQueries({ queryKey: queryKeys.containers.listPrefix(listScope) });
-				void queryClient.invalidateQueries({ queryKey: queryKeys.projects.listPrefix(listScope) });
-			}
-			for (const env of environmentStore.shown) {
-				void queryClient.invalidateQueries({ queryKey: queryKeys.containers.environment(env.id) });
-				void queryClient.invalidateQueries({ queryKey: queryKeys.projects.environment(env.id) });
-			}
-		}
-	);
-
 	const resourceSortSupported = $derived(containers.resourceSortSupported === true);
 	const resourceSortActive = $derived.by(() => {
 		if (groupByProject || !resourceSortSupported) return false;
@@ -194,25 +183,18 @@
 	const {
 		performContainerAction,
 		handleRemoveContainer,
-		handleUpdateContainer,
 		handleRedeployContainer,
 		handleBulkStart,
 		handleBulkStop,
 		handleBulkRestart,
-		handleBulkRemove,
-		handleBulkUpdate
+		handleBulkRemove
 	} = createContainerActions({
 		setSelectedIds: (next) => {
 			selectedIds = next;
 		},
 		refreshContainers: invalidateContainers,
 		actionStatus,
-		isBulkLoading,
-		scope: () => scope,
-		onUpdateAccepted: (activity) => {
-			if (updateTableMounted) updateActivities.accept(activity);
-		},
-		canRefreshUpdates: () => updateTableMounted && scope === environmentStore.shownKey
+		isBulkLoading
 	});
 
 	const isAnyLoading = $derived(hasAnyLoadingState(actionStatus, isBulkLoading));
@@ -258,13 +240,7 @@
 		return new Set(runningContainers.map((c) => rowKey(c)));
 	});
 
-	const resourcesCurrent = $derived(scope === environmentStore.shownKey);
-
-	const activeUpdateKeys = $derived(activityStore.activeUpdateKeys);
-
-	function getRowActionStatus(item: ContainerRow): ActionStatus {
-		return actionStatus[rowKey(item)] || (activeUpdateKeys.has(`${item.environmentId}:${item.id}`) ? 'updating' : '');
-	}
+	const resourcesCurrent = $derived(scope === environmentsKey);
 
 	$effect(() => {
 		if (!resourceSortActive || !resourcesCurrent) return;
@@ -273,13 +249,12 @@
 		);
 		return () => resourcePoller.stop();
 	});
-	const canUpdateContainers = $derived(hasShownPermission('image-updates:apply'));
-	const canStartContainers = $derived(hasShownPermission('containers:start'));
-	const canStopContainers = $derived(hasShownPermission('containers:stop'));
-	const canRestartContainers = $derived(hasShownPermission('containers:restart'));
-	const canDeleteContainers = $derived(hasShownPermission('containers:delete'));
+	const canStartContainers = $derived(hasShownPermission('containers:start', tableEnvironments));
+	const canStopContainers = $derived(hasShownPermission('containers:stop', tableEnvironments));
+	const canRestartContainers = $derived(hasShownPermission('containers:restart', tableEnvironments));
+	const canDeleteContainers = $derived(hasShownPermission('containers:delete', tableEnvironments));
 	const canConvertToCompose = $derived(
-		hasShownPermission('projects:create') && settingsStore.current?.experimentalFeaturesEnabled === true
+		hasShownPermission('projects:create', tableEnvironments) && settingsStore.current?.experimentalFeaturesEnabled === true
 	);
 	const selectedEnvironmentIds = $derived(
 		new Set(containers.data?.filter((c) => selectedIds?.includes(rowKey(c))).map((c) => c.environmentId))
@@ -292,23 +267,6 @@
 		goto(resolve(`/(app)/projects/new?fromContainers=${convertible.map((c) => c.id).join(',')}&fromEnv=${fromEnv}`));
 	}
 
-	function filterUpdatableContainerIds() {
-		return selectedIds?.filter((id) => {
-			const container = containers.data?.find((c) => rowKey(c) === id);
-			return container?.updateInfo?.hasUpdate;
-		});
-	}
-
-	function handleSelectedBulkUpdate(ids: string[]) {
-		const validUpdateIds = filterUpdatableContainerIds();
-
-		if (!validUpdateIds?.length) {
-			return;
-		}
-
-		handleBulkUpdate(validUpdateIds, ids);
-	}
-
 	// Mounted only while a row is targeted, so each open gets fresh state.
 	let killTarget = $state<ContainerRow | null>(null);
 
@@ -317,8 +275,6 @@
 	}
 
 	onMount(() => {
-		updateTableMounted = true;
-		const unsubscribeActivities = activityStore.subscribeActivities(updateActivities.observe);
 		collapsedGroupsState = new PersistedState<Record<string, boolean>>('container-groups-collapsed', {});
 
 		const persistedInternal = (customSettings['showInternalContainers'] as boolean) ?? false;
@@ -340,8 +296,6 @@
 		requestOptions = withSupportedSort(requestOptions);
 
 		return () => {
-			updateTableMounted = false;
-			unsubscribeActivities();
 			statsManager.destroy();
 		};
 	});
@@ -366,7 +320,7 @@
 	}
 
 	const columns = $derived([
-		...environmentColumns<ContainerRow>(),
+		...(showEnvironmentColumn ? environmentColumns<ContainerRow>() : []),
 		{ accessorKey: 'id', title: m.common_id(), cell: IdCell, hidden: true },
 		{
 			accessorKey: 'names',
@@ -380,18 +334,6 @@
 			title: m.common_state(),
 			sortable: !groupByProject,
 			cell: StateCell
-		},
-		{
-			id: 'updates',
-			accessorFn: (row) => {
-				if (row.updateInfo?.hasUpdate) return 'has_update';
-				if (row.updateInfo?.error) return 'error';
-				if (row.updateInfo) return 'up_to_date';
-				return 'unknown';
-			},
-			title: m.updates(),
-			clientSort: !groupByProject,
-			cell: UpdatesCell
 		},
 		{
 			id: 'cpuUsage',
@@ -457,7 +399,6 @@
 	const mobileFields = [
 		{ id: 'id', label: m.common_id(), defaultVisible: false },
 		{ id: 'state', label: m.common_state(), defaultVisible: true },
-		{ id: 'updates', label: m.updates(), defaultVisible: true },
 		{ id: 'cpuUsage', label: m.cpu_usage(), defaultVisible: false },
 		{ id: 'memoryUsage', label: m.memory_usage(), defaultVisible: false },
 		{ id: 'status', label: m.common_status(), defaultVisible: true },
@@ -484,19 +425,6 @@
 				loading: isBulkLoading.start,
 				disabled: !resourcesCurrent || isAnyLoading,
 				icon: PlayIcon
-			});
-		}
-		if (canUpdateContainers && filterUpdatableContainerIds()?.length > 0) {
-			actions.push({
-				id: 'update',
-				label: m.containers_bulk_update({
-					count: filterUpdatableContainerIds()?.length ?? 0
-				}),
-				action: 'update',
-				onclick: handleSelectedBulkUpdate,
-				loading: isBulkLoading.update,
-				disabled: !resourcesCurrent || isAnyLoading,
-				icon: UpdateIcon
 			});
 		}
 		if (canStopContainers) {
@@ -802,11 +730,9 @@
 {/snippet}
 
 {#snippet StateCell({ item, view }: { item: ContainerRow; view: TableViewMode })}
-	{@const status = getRowActionStatus(item)}
+	{@const status = actionStatus[rowKey(item)] ?? ''}
 	<div class="flex items-center gap-2">
-		{#if status === 'updating'}
-			<Badge variant="primary" minWidth="20" beam>{getActionStatusMessage(status)}</Badge>
-		{:else if status}
+		{#if status}
 			<div class="flex items-center gap-1.5">
 				<Spinner class="size-3.5" />
 				<span class="text-xs font-medium text-muted-foreground">
@@ -854,43 +780,6 @@
 			{/if}
 		</span>
 	{/if}
-	{#if canUpdateContainers}
-		<span class="flex size-7 shrink-0 items-center justify-center">
-			{#if !status && item.updateInfo?.hasUpdate && hasPermission('image-updates:apply', item.environmentId)}
-				<ArcaneButton
-					action="base"
-					tone="ghost"
-					size="icon"
-					class="size-7"
-					onclick={() => handleUpdateContainer(item)}
-					disabled={!resourcesCurrent || isBulkActionRunning}
-					title={m.update_container()}
-					icon={UpdateIcon}
-				/>
-			{/if}
-		</span>
-	{/if}
-{/snippet}
-
-{#snippet ContainerUpdateItem(item: ContainerRow)}
-	{@const imageRef = parseImageRef(item.image)}
-	<ImageUpdateItem
-		updateInfo={item.updateInfo}
-		imageId={item.imageId}
-		imageRef={item.image}
-		containerId={item.id}
-		environmentId={item.environmentId}
-		tagUpdates={item.updateStrategy
-			? item.updateStrategy !== 'digest'
-			: item.labels?.['com.getarcaneapp.arcane.updater.strategy']?.trim() === 'tag'}
-		repo={imageRef.repo}
-		tag={imageRef.tag}
-		debugHasUpdate={false}
-	/>
-{/snippet}
-
-{#snippet UpdatesCell({ item }: { item: ContainerRow })}
-	{@render ContainerUpdateItem(item)}
 {/snippet}
 
 {#snippet CreatedCell({ item }: { item: ContainerSummary })}
@@ -961,15 +850,6 @@
 				show: (mobileFieldVisibility['ports'] ?? true) && (item.ports?.length ?? 0) > 0
 			},
 			{
-				label: m.updates(),
-				getValue: (item: ContainerRow) => item,
-				icon: UpdateIcon,
-				iconVariant: 'purple' as const,
-				type: 'component' as const,
-				component: ContainerUpdateItem,
-				show: mobileFieldVisibility['updates'] ?? true
-			},
-			{
 				label: m.containers_ip_address(),
 				getValue: (item: ContainerSummary) => getContainerIpAddresses(item),
 				icon: NetworksIcon,
@@ -1026,11 +906,11 @@
 
 {#snippet RowActions({ item, view }: { item: ContainerRow; view?: TableViewMode })}
 	{#if resourcesCurrent}
-		{@const status = actionStatus[rowKey(item)]}
+		{@const status = actionStatus[rowKey(item)] ?? ''}
 		{@const envId = item.environmentId}
 		{@const inlineStateActions = view === 'grid' || (view === 'list' && columnVisibility['state'] !== false)}
 		{#if view === 'grid'}
-			{@render StateActions(item, getRowActionStatus(item))}
+			{@render StateActions(item, status)}
 		{/if}
 		<RowActionsMenu name={getContainerDisplayName(item)}>
 			<DropdownMenu.Item
@@ -1065,15 +945,6 @@
 
 			<DropdownMenu.Separator />
 
-			{#if !inlineStateActions && item.updateInfo?.hasUpdate && hasPermission('image-updates:apply', envId)}
-				<ActionMenuItem
-					onclick={() => handleUpdateContainer(item)}
-					disabled={isBulkActionRunning || !!status}
-					icon={UpdateIcon}
-					label={status === 'updating' ? '' : m.common_update()}
-					loading={status === 'updating'}
-				/>
-			{/if}
 			{#if item.state === 'paused'}
 				<IfPermitted perm="containers:pause" {envId}>
 					<ActionMenuItem
@@ -1184,7 +1055,7 @@
 
 <ArcaneTable
 	bind:this={tablePreferences}
-	persistKey="arcane-container-table"
+	{persistKey}
 	items={containers}
 	bind:requestOptions={() => tableRequestOptions, (next) => (requestOptions = withSupportedSort(next))}
 	bind:selectedIds

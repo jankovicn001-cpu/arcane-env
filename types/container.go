@@ -11,10 +11,6 @@ import (
 )
 
 type (
-	ContainerSetAutoUpdateRequest struct {
-		Enabled bool `json:"enabled" doc:"Whether auto-update is enabled for this container"`
-	}
-
 	ContainerRestartPolicyCreate struct {
 		Name              string `json:"name,omitempty"`
 		MaximumRetryCount int    `json:"maximumRetryCount,omitempty"`
@@ -139,8 +135,6 @@ type (
 		TotalContainers   int `json:"totalContainers"`
 
 		UnhealthyContainers int `json:"unhealthyContainers" doc:"Containers whose healthcheck reports unhealthy"`
-
-		UpdatesAvailable int `json:"updatesAvailable" doc:"Standalone containers with a pending image update"`
 	}
 
 	ContainerActionResult struct {
@@ -273,29 +267,26 @@ type (
 	ContainerSummary struct {
 		Labels          map[string]string        `json:"labels"`
 		NetworkSettings ContainerNetworkSettings `json:"networkSettings"`
-		UpdateInfo      *ImageUpdateInfo         `json:"updateInfo,omitempty"`
 
 		ResourceSample *ContainerResourceSample `json:"resourceSample,omitempty"`
 		EnvironmentTag
-		ID             string              `json:"id"`
-		Image          string              `json:"image"`
-		ImageID        string              `json:"imageId"`
-		Command        string              `json:"command"`
-		State          string              `json:"state"`
-		Status         string              `json:"status"`
-		IconLightURL   string              `json:"iconLightUrl,omitempty"`
-		IconDarkURL    string              `json:"iconDarkUrl,omitempty"`
-		UpdateStrategy string              `json:"updateStrategy,omitempty"`
-		Names          []string            `json:"names"`
-		Ports          []ContainerPort     `json:"ports"`
-		Mounts         []ContainerMount    `json:"mounts"`
-		HostConfig     ContainerHostConfig `json:"hostConfig"`
+		ID           string              `json:"id"`
+		Image        string              `json:"image"`
+		ImageID      string              `json:"imageId"`
+		Command      string              `json:"command"`
+		State        string              `json:"state"`
+		Status       string              `json:"status"`
+		IconLightURL string              `json:"iconLightUrl,omitempty"`
+		IconDarkURL  string              `json:"iconDarkUrl,omitempty"`
+		Names        []string            `json:"names"`
+		Ports        []ContainerPort     `json:"ports"`
+		Mounts       []ContainerMount    `json:"mounts"`
+		HostConfig   ContainerHostConfig `json:"hostConfig"`
 
 		Created          int64 `json:"created"`
 		RedeployDisabled bool  `json:"redeployDisabled,omitempty"`
 
-		AutoUpdateEnabled bool `json:"autoUpdateEnabled"`
-		Hidden            bool `json:"hidden,omitempty"`
+		Hidden bool `json:"hidden,omitempty"`
 	}
 
 	ContainerComposeInfo struct {
@@ -317,7 +308,6 @@ type (
 		Labels          map[string]string        `json:"labels,omitempty"`
 
 		ComposeInfo      *ContainerComposeInfo `json:"composeInfo,omitempty"`
-		UpdateInfo       *ImageUpdateInfo      `json:"updateInfo,omitempty"`
 		Hardened         *HardenedImageInfo    `json:"hardened,omitempty"`
 		ActivityID       *string               `json:"activityId,omitempty"`
 		ID               string                `json:"id"`
@@ -331,8 +321,6 @@ type (
 		Mounts           []ContainerMount      `json:"mounts"`
 		HostConfig       ContainerHostConfig   `json:"hostConfig"`
 		RedeployDisabled bool                  `json:"redeployDisabled,omitempty"`
-
-		AutoUpdateEnabled bool `json:"autoUpdateEnabled"`
 	}
 
 	ContainerCreated struct {

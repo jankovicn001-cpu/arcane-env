@@ -118,9 +118,7 @@ func (s *JobService) GetJobSchedules(ctx context.Context) types.JobScheduleConfi
 		EnvironmentHealthInterval:      s.settings.GetStringSetting(ctx, "environmentHealthInterval"),
 		EventCleanupInterval:           s.settings.GetStringSetting(ctx, "eventCleanupInterval"),
 		ExpiredSessionsCleanupInterval: s.settings.GetStringSetting(ctx, "expiredSessionsCleanupInterval"),
-		AutoUpdateInterval:             s.settings.GetStringSetting(ctx, "autoUpdateInterval"),
 		DockerClientRefreshInterval:    s.settings.GetStringSetting(ctx, "dockerClientRefreshInterval"),
-		PollingInterval:                s.settings.GetStringSetting(ctx, "pollingInterval"),
 		ScheduledPruneInterval:         s.settings.GetStringSetting(ctx, "scheduledPruneInterval"),
 		VulnerabilityScanInterval:      s.settings.GetStringSetting(ctx, "vulnerabilityScanInterval"),
 		ImageAutoPatchInterval:         s.settings.GetStringSetting(ctx, "imageAutoPatchInterval"),
@@ -152,19 +150,9 @@ func (s *JobService) UpdateJobSchedules(ctx context.Context, updates types.JobSc
 			update:  updates.ExpiredSessionsCleanupInterval,
 		},
 		{
-			key:     "autoUpdateInterval",
-			current: current.AutoUpdateInterval,
-			update:  updates.AutoUpdateInterval,
-		},
-		{
 			key:     "dockerClientRefreshInterval",
 			current: current.DockerClientRefreshInterval,
 			update:  updates.DockerClientRefreshInterval,
-		},
-		{
-			key:     "pollingInterval",
-			current: current.PollingInterval,
-			update:  updates.PollingInterval,
 		},
 		{
 			key:     "scheduledPruneInterval",
@@ -256,17 +244,6 @@ func (s *JobService) RescheduleJobsForSettingKeys(ctx context.Context, changedKe
 			continue
 		}
 
-		// Continuous bus watchers have no cron entry to reschedule; notify the
-		// watcher so it re-reads its poll schedule instead.
-		if jobMeta.IsContinuous {
-			if jobID == "image-polling" {
-				if err := s.settings.NotifySettingsChanges(s.lifecycleCtx, "pollingInterval"); err != nil {
-					rescheduleErrors = append(rescheduleErrors, err)
-				}
-			}
-			continue
-		}
-
 		job, ok := s.scheduler.GetJob(jobID)
 		if !ok {
 			rescheduleErrors = append(rescheduleErrors, fmt.Errorf("job %s not found in scheduler", jobID))
@@ -302,9 +279,7 @@ func (s *JobService) ListJobs(ctx context.Context) (*types.JobListResponse, erro
 	for _, jobMeta := range allMetadata {
 		schedule := func() string {
 			switch {
-			// Continuous jobs with a settings key (image-polling) are event-driven but
-			// also poll on that cron schedule, so surface the real expression.
-			case jobMeta.IsContinuous && jobMeta.SettingsKey == "":
+			case jobMeta.IsContinuous:
 				return "continuous"
 			case jobMeta.ID == "analytics-heartbeat":
 				return "automatic (checked hourly; sent once per 24h)"
@@ -314,7 +289,7 @@ func (s *JobService) ListJobs(ctx context.Context) (*types.JobListResponse, erro
 			return s.settings.GetStringSetting(ctx, jobMeta.SettingsKey)
 		}()
 		runtimeState, hasRuntimeState := s.scheduler.GetJobRuntimeState(jobMeta.ID)
-		useRuntimeState := hasRuntimeState && (jobMeta.SettingsKey != "" || jobMeta.ID == "upgrade-log-cleanup") && jobMeta.ID != "environment-health"
+		useRuntimeState := hasRuntimeState && jobMeta.SettingsKey != "" && jobMeta.ID != "environment-health"
 		jobs = append(jobs, jobMeta.ToJobStatus(
 			cmp.Or(kit.Ternary(useRuntimeState, runtimeState.Schedule, ""), schedule),
 			kit.Ternary(useRuntimeState, runtimeState.NextRun, func() *time.Time {
@@ -370,7 +345,7 @@ func (s *JobService) ActivityID(run types.SchedulerRun) string {
 		return ""
 	}
 	if run.Trigger != "manual" &&
-		!slices.Contains([]string{"auto-update", "auto-patch", "auto-heal", "scheduled-prune", "vulnerability-scan"}, run.JobID) &&
+		!slices.Contains([]string{"auto-patch", "auto-heal", "scheduled-prune", "vulnerability-scan"}, run.JobID) &&
 		!strings.HasPrefix(run.JobID, "gitops-sync:") && !strings.HasPrefix(run.JobID, "volume-backup:") && !strings.HasPrefix(run.JobID, "system-backup:") {
 		return ""
 	}
@@ -424,12 +399,6 @@ func (s *JobService) ReconcileStartupActivities(ctx context.Context, extraProtec
 	}
 	if failInterruptedBackupsErr := s.activity.FailInterruptedBackups(ctx, protected...); failInterruptedBackupsErr != nil {
 		return failInterruptedBackupsErr
-	}
-	if _, failStaleImageUpdateChecksErr := s.activity.FailStaleImageUpdateChecks(ctx); failStaleImageUpdateChecksErr != nil {
-		return failStaleImageUpdateChecksErr
-	}
-	if _, resolveStaleAutoUpdateActivitiesErr := s.activity.ResolveStaleAutoUpdateActivities(ctx, protected...); resolveStaleAutoUpdateActivitiesErr != nil {
-		return resolveStaleAutoUpdateActivitiesErr
 	}
 	if _, resolveOrphanedQueuedActivitiesErr := s.activity.ResolveOrphanedQueuedActivities(ctx, protected...); resolveOrphanedQueuedActivitiesErr != nil {
 		return resolveOrphanedQueuedActivitiesErr
@@ -493,7 +462,7 @@ func (s *JobService) validateLocalJob(ctx context.Context, jobID string) error {
 		if slices.ContainsFunc(s.evaluatePrerequisites(ctx, metadata), func(prereq types.JobPrerequisite) bool { return !prereq.IsMet }) {
 			return errors.New("job prerequisites are not met")
 		}
-		if metadata.IsContinuous || jobID == "environment-health" {
+		if jobID == "environment-health" {
 			return nil
 		}
 	}
@@ -553,7 +522,7 @@ func (s *JobService) executeRun(ctx context.Context, run types.SchedulerRun) (re
 	if run.EnvironmentID != "0" {
 		return s.remote.Deliver(ctx, run)
 	}
-	if slices.Contains([]string{"auto-update", "auto-patch", "auto-heal", "scheduled-prune", "vulnerability-scan", "image-polling"}, run.JobID) ||
+	if slices.Contains([]string{"auto-patch", "auto-heal", "scheduled-prune", "vulnerability-scan"}, run.JobID) ||
 		strings.HasPrefix(run.JobID, "gitops-sync:") || strings.HasPrefix(run.JobID, "volume-backup:") || strings.HasPrefix(run.JobID, "system-backup:") {
 		status, err := s.environment.TestConnection(ctx, "0")
 		if err != nil || status != "online" {
@@ -564,24 +533,12 @@ func (s *JobService) executeRun(ctx context.Context, run types.SchedulerRun) (re
 	if run.JobID == "environment-health" && s.RunEnvironmentHealthNow != nil {
 		return classifyOutcome(run.JobID, types.SchedulerOutcome{}, s.RunEnvironmentHealthNow(ctx))
 	}
-	if metadata, ok := types.GetJobMetadata(run.JobID); ok && metadata.IsContinuous {
-		if err := s.validateLocalJob(ctx, run.JobID); err != nil {
-			return types.SchedulerOutcome{Status: types.RunStatusCanceled}, err
-		}
-		return classifyOutcome(run.JobID, types.SchedulerOutcome{}, s.scheduler.RunBusWatcherNow(ctx, run.JobID))
-	}
 	job, ok := s.scheduler.GetJob(run.JobID)
 	if !ok {
-		return types.SchedulerOutcome{
-			Status:  kit.Ternary(run.JobID == "auto-update" && run.AttemptCount > 1, types.RunStatusFailed, types.RunStatusCanceled),
-			Message: "Job or target no longer exists",
-		}, nil
+		return types.SchedulerOutcome{Status: types.RunStatusCanceled, Message: "Job or target no longer exists"}, nil
 	}
 	if conditional, localOk := job.(types.ConditionalJob); localOk && !conditional.ShouldSchedule(ctx) {
-		return types.SchedulerOutcome{
-			Status:  kit.Ternary(run.JobID == "auto-update" && run.AttemptCount > 1, types.RunStatusFailed, types.RunStatusCanceled),
-			Message: "Job is disabled",
-		}, nil
+		return types.SchedulerOutcome{Status: types.RunStatusCanceled, Message: "Job is disabled"}, nil
 	}
 	outcome, err := job.Run(ctx)
 	return classifyOutcome(run.JobID, outcome, err)
@@ -620,7 +577,7 @@ func classifyOutcome(jobID string, outcome types.SchedulerOutcome, err error) (t
 
 func safeJob(jobID string) bool {
 	switch jobID {
-	case "image-polling", "environment-health", "docker-client-refresh", "event-cleanup", "expired-sessions-cleanup", "activity-sweep", "upload-sessions-cleanup",
+	case "environment-health", "docker-client-refresh", "event-cleanup", "expired-sessions-cleanup", "activity-sweep", "upload-sessions-cleanup",
 		"git-clone-scratch-cleanup", "analytics-heartbeat", "apns-outbox", "vulnerability-scan":
 		return true
 	}
@@ -644,7 +601,7 @@ func (s *JobService) reconcileRun(ctx context.Context, run types.SchedulerRun) (
 	}
 	var activityIDs []string
 	for _, target := range run.Outcome.Targets {
-		if run.JobID != "auto-update" && target.Status != types.RunStatusSucceeded && target.Status != types.RunStatusSkipped && target.ActivityID != "" {
+		if target.Status != types.RunStatusSucceeded && target.Status != types.RunStatusSkipped && target.ActivityID != "" {
 			activityIDs = append(activityIDs, target.ActivityID)
 		}
 	}
@@ -661,7 +618,7 @@ func (s *JobService) reconcileRun(ctx context.Context, run types.SchedulerRun) (
 	// A successful activity proves only that target, never the entire batch.
 	targets := make([]types.TargetOutcome, 0, len(run.Outcome.Targets))
 	for index, target := range run.Outcome.Targets {
-		if run.JobID == "auto-update" || target.Status == types.RunStatusSucceeded || target.Status == types.RunStatusSkipped {
+		if target.Status == types.RunStatusSucceeded || target.Status == types.RunStatusSkipped {
 			targets = append(targets, target)
 			continue
 		}

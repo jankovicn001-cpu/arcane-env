@@ -280,7 +280,7 @@ func TestEnvironmentMiddleware_KeepsNodeAgentDeploymentCreationLocal(t *testing.
 func TestEnvironmentMiddleware_ForwardsResolvedHeadersOnly(t *testing.T) {
 	caller := authz.NewPermissionSet()
 	caller.AddGlobal(authz.PermUsersList, authz.PermContainersStart)
-	caller.AddEnv("env-remote", authz.PermContainersUpdate)
+	caller.AddEnv("env-remote", authz.PermContainersRedeploy)
 	caller.AddEnv("env-other", authz.PermContainersDelete)
 	admin := authz.NewPermissionSet()
 	admin.AddGlobal(authz.AllPermissions()...)
@@ -294,29 +294,25 @@ func TestEnvironmentMiddleware_ForwardsResolvedHeadersOnly(t *testing.T) {
 		wantHeader     string
 		userID         string
 		userName       string
-		wantInitiator  string
 	}{
-		{name: "forwards the caller's preference", catalog: new("dashboard-icons"), wantHeader: "dashboard-icons", userID: "user-1", userName: "operator", wantInitiator: "user-1"},
+		{name: "forwards the caller's preference", catalog: new("dashboard-icons"), wantHeader: "dashboard-icons", userID: "user-1", userName: "operator"},
 		{name: "strips a client-supplied header when the caller has no preference", clientSupplied: "dashboard-icons", wantHeader: ""},
-		{name: "forwards a non-sudo caller's permissions", userID: "user-2", userName: "limited", wantInitiator: "user-2", perms: caller},
+		{name: "forwards a non-sudo caller's permissions", userID: "user-2", userName: "limited", perms: caller},
 		{
 			name:          "forwards a global admin as a flag",
 			userID:        "user-3",
 			userName:      "admin",
-			wantInitiator: "user-3",
 			perms:         admin,
 			wantForwarded: `{"global":[],"environment":[],"globalAdmin":true}`,
 		},
 	}
 
 	updateMatcher := authz.NewPermissionMatcher()
-	updateMatcher.Add(http.MethodPost, "/containers/{containerId}/update", authz.PermContainersUpdate)
+	updateMatcher.Add(http.MethodPost, "/containers/{containerId}/redeploy", authz.PermContainersRedeploy)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var forwarded string
-			var forwardedInitiator string
-			var forwardedName string
 			var forwardedPermissions string
 			registry := agent.NewTunnelRegistry()
 			manager := echo.New()
@@ -349,8 +345,6 @@ func TestEnvironmentMiddleware_ForwardsResolvedHeadersOnly(t *testing.T) {
 				},
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					forwarded = r.Header.Get(HeaderIconCatalog)
-					forwardedInitiator = r.Header.Get(HeaderUpdateInitiatorID)
-					forwardedName = r.Header.Get(HeaderUpdateInitiatorName)
 					forwardedPermissions = r.Header.Get(HeaderForwardedPermissions)
 					w.WriteHeader(http.StatusOK)
 				}),
@@ -379,13 +373,11 @@ func TestEnvironmentMiddleware_ForwardsResolvedHeadersOnly(t *testing.T) {
 
 			router := echo.New()
 			api := attachMiddleware(router, mw)
-			api.POST("/agents/:id/containers/:containerId/update", func(c *echo.Context) error {
+			api.POST("/agents/:id/containers/:containerId/redeploy", func(c *echo.Context) error {
 				return c.JSON(http.StatusOK, map[string]any{"success": true})
 			})
 
-			req := httptest.NewRequest(http.MethodPost, "/api/agents/env-remote/containers/container-1/update", http.NoBody)
-			req.Header.Set(HeaderUpdateInitiatorID, "spoofed")
-			req.Header.Set(HeaderUpdateInitiatorName, "spoofed")
+			req := httptest.NewRequest(http.MethodPost, "/api/agents/env-remote/containers/container-1/redeploy", http.NoBody)
 			req.Header.Set(HeaderForwardedPermissions, `{"global":["users:create"],"environment":[]}`)
 			if tt.clientSupplied != "" {
 				req.Header.Set(HeaderIconCatalog, tt.clientSupplied)
@@ -395,8 +387,6 @@ func TestEnvironmentMiddleware_ForwardsResolvedHeadersOnly(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, recorder.Code)
 			assert.Equal(t, tt.wantHeader, forwarded)
-			assert.Equal(t, tt.wantInitiator, forwardedInitiator)
-			assert.Equal(t, tt.userName, forwardedName)
 			if tt.perms == nil {
 				assert.Empty(t, forwardedPermissions)
 				return
@@ -410,8 +400,8 @@ func TestEnvironmentMiddleware_ForwardsResolvedHeadersOnly(t *testing.T) {
 			agentPerms := decoded.PermissionSet("0")
 			assert.True(t, agentPerms.Allows(authz.PermUsersList, ""))
 			assert.True(t, agentPerms.Allows(authz.PermContainersStart, "0"))
-			assert.True(t, agentPerms.Allows(authz.PermContainersUpdate, "0"))
-			assert.False(t, agentPerms.Allows(authz.PermContainersUpdate, ""))
+			assert.True(t, agentPerms.Allows(authz.PermContainersRedeploy, "0"))
+			assert.False(t, agentPerms.Allows(authz.PermContainersRedeploy, ""))
 			assert.False(t, agentPerms.Allows(authz.PermContainersDelete, "0"))
 			assert.False(t, agentPerms.Allows(authz.PermUsersCreate, ""))
 			assert.False(t, agentPerms.Sudo)
@@ -425,7 +415,7 @@ func (openTunnelConn) IsClosed() bool {
 
 func TestEnvironmentMiddleware_RequiresForwardedPermissionsCapability(t *testing.T) {
 	caller := authz.NewPermissionSet()
-	caller.AddEnv("env-remote", authz.PermContainersUpdate)
+	caller.AddEnv("env-remote", authz.PermContainersRedeploy)
 
 	tests := []struct {
 		name         string
@@ -458,7 +448,7 @@ func TestEnvironmentMiddleware_RequiresForwardedPermissionsCapability(t *testing
 	}
 
 	updateMatcher := authz.NewPermissionMatcher()
-	updateMatcher.Add(http.MethodPost, "/containers/{containerId}/update", authz.PermContainersUpdate)
+	updateMatcher.Add(http.MethodPost, "/containers/{containerId}/redeploy", authz.PermContainersRedeploy)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -499,12 +489,12 @@ func TestEnvironmentMiddleware_RequiresForwardedPermissionsCapability(t *testing
 				registry: registry,
 				matcher:  updateMatcher,
 			})
-			api.POST("/agents/:id/containers/:containerId/update", func(c *echo.Context) error {
+			api.POST("/agents/:id/containers/:containerId/redeploy", func(c *echo.Context) error {
 				return c.JSON(http.StatusTeapot, map[string]any{"success": true})
 			})
 
 			recorder := httptest.NewRecorder()
-			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/agents/env-remote/containers/container-1/update", http.NoBody))
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/agents/env-remote/containers/container-1/redeploy", http.NoBody))
 
 			require.Equal(t, tt.wantStatus, recorder.Code)
 			if tt.wantStatus == http.StatusOK {

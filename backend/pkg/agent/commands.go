@@ -31,8 +31,6 @@ var (
 		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/containers/{containerId}", CommandName: "container.action"},
 		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/containers/{containerId}/redeploy", CommandName: "container.redeploy"},
 		{Method: http.MethodDelete, PathPattern: "/api/agents/{id}/containers/{containerId}", CommandName: "container.delete"},
-		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/containers/{containerId}/update", CommandName: "container.update"},
-		{Method: http.MethodPut, PathPattern: "/api/agents/{id}/containers/{containerId}/autoupdate", CommandName: "container.auto_update.set"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/containers/{containerId}/processes", CommandName: "container.processes"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/containers/{containerId}/logs/download", CommandName: "container.logs.download"},
 		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/containers/{containerId}/commit", CommandName: "container.commit"},
@@ -63,14 +61,6 @@ var (
 		{Method: http.MethodDelete, PathPattern: "/api/agents/{id}/uploads/{kind}/{uploadId}", CommandName: "upload.session.delete"},
 		{Method: http.MethodPut, PathPattern: "/api/agents/{id}/uploads/{kind}/{uploadId}/chunks/{index}", CommandName: "upload.session.chunk"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/uploads/{kind}/{uploadId}/chunks/{index}", CommandName: "upload.session.chunk.read"},
-
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/images/updates/check", CommandName: "image_update.check"},
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/images/updates/check/{imageId}", CommandName: "image_update.check_one"},
-		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/images/updates/check/{imageId}", CommandName: "image_update.check_one"},
-		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/images/updates/check", CommandName: "image_update.check_images"},
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/images/updates/summary", CommandName: "image_update.summary"},
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/images/updates/refs", CommandName: "image_update.by_refs"},
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/images/updates/releasenotes", CommandName: "image_update.release_notes"},
 
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/activities", CommandName: "activity.list"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/activities/{activityId}", CommandName: "activity.inspect"},
@@ -105,7 +95,6 @@ var (
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/projects/{projectId}/compose", CommandName: "project.compose"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/projects/{projectId}/workspace", CommandName: "project.workspace.list"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/projects/{projectId}/runtime", CommandName: "project.runtime"},
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/projects/{projectId}/updates", CommandName: "project.updates"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/projects/{projectId}/workspace/file", CommandName: "project.workspace.read_file"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/projects/{projectId}/workspace/file/download", CommandName: "project.workspace.download"},
 		{Method: http.MethodPatch, PathPattern: "/api/agents/{id}/projects/{projectId}/workspace", CommandName: "project.workspace.update"},
@@ -194,20 +183,12 @@ var (
 
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/events/changes", CommandName: "event.changes"},
 
-		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/updater/run", CommandName: "updater.run"},
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/updater/status", CommandName: "updater.status"},
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/updater/history", CommandName: "updater.history"},
-		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/updater/projects/{projectId}/check", CommandName: "updater.project.check"},
-
 		{Method: http.MethodHead, PathPattern: "/api/agents/{id}/system/health", CommandName: "system.health"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/system/docker/info", CommandName: "system.docker_info"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/system/df", CommandName: "system.df"},
 		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/system/prune", CommandName: "system.prune"},
 		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/system/containers", CommandName: "system.containers.action"},
 		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/system/convert", CommandName: "system.convert"},
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/system/upgrade/check", CommandName: "system.upgrade.check"},
-		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/system/upgrade", CommandName: "system.upgrade.run"},
-		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/system/upgrade/progress", CommandName: "system.upgrade.progress"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/diagnostics/actors", CommandName: "diagnostics.actors"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/diagnostics/goroutines", CommandName: "diagnostics.goroutines"},
 
@@ -261,7 +242,6 @@ var (
 
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/podman/status", CommandName: "podman.status"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/podman/info", CommandName: "podman.info"},
-		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/podman/autoupdate", CommandName: "podman.autoupdate"},
 		{Method: http.MethodGet, PathPattern: "/api/agents/{id}/podman/pods", CommandName: "podman.pod.list"},
 		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/podman/pods", CommandName: "podman.pod.create"},
 		{Method: http.MethodPost, PathPattern: "/api/agents/{id}/podman/pods/prune", CommandName: "podman.pod.prune"},

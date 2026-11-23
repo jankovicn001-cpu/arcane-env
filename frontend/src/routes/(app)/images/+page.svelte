@@ -118,19 +118,6 @@
 		}
 	}));
 
-	const checkUpdatesMutation = createMutation(() => ({
-		mutationKey: ['images', 'check-updates', pageState.scope],
-		mutationFn: () =>
-			settleAcrossEnvironments(actionEnvironments('image-updates:check'), (id) => imageService.checkAllImages(id)),
-		onSuccess: async (results) => {
-			toast.success(m.images_update_check_completed(), activityToastOptions(extractActivityId(results[0]?.value)));
-			await invalidateEnvironmentImages(results);
-		},
-		onError: (error) => {
-			toast.error(m.images_update_check_failed(), { description: extractApiErrorMessage(error) });
-		}
-	}));
-
 	let pickedUploadEnvironmentId = $state('');
 	const uploadEnvironmentId = $derived(destinationEnvironmentId(pickedUploadEnvironmentId, 'images:upload'));
 	// Merged lists carry one environment's upload limit, so the destination's own is read while uploading.
@@ -175,7 +162,6 @@
 
 	const isUploading = $derived(uploadImagesMutation.isPending);
 	const isPruning = $derived(pruneImagesMutation.isPending);
-	const isChecking = $derived(checkUpdatesMutation.isPending);
 
 	const onUpload: FileDropZoneProps['onUpload'] = async (files) => {
 		uploadedFiles = [...uploadedFiles, ...files];
@@ -191,10 +177,6 @@
 			return;
 		}
 		await uploadImagesMutation.mutateAsync({ files: uploadedFiles, requestedEnvId: uploadEnvironmentId });
-	}
-
-	async function handleTriggerBulkUpdateCheck() {
-		await checkUpdatesMutation.mutateAsync();
 	}
 
 	async function openPruneDialog() {
@@ -273,17 +255,6 @@
 				label: m.images_upload_image(),
 				onclick: () => (isUploadDialogOpen = true),
 				disabled: !resourcesReady
-			});
-		}
-		if (canPullImage) {
-			buttons.push({
-				id: 'check-updates',
-				action: 'inspect',
-				label: m.images_check_updates(),
-				loadingLabel: m.common_action_checking(),
-				onclick: handleTriggerBulkUpdateCheck,
-				loading: isChecking,
-				disabled: !resourcesReady || isChecking
 			});
 		}
 		buttons.push(pinViewAction('images', pageState.requestOptions, readableEnvironments('images:list')));

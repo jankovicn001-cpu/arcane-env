@@ -34,7 +34,6 @@ import (
 	"kit.getarcane.app"
 	"kit.getarcane.app/docker/compat"
 	"kit.getarcane.app/docker/streams/bus"
-	"kit.getarcane.app/updater/labels"
 
 	"getarcane.dev/arcane/v3/internal/common"
 	"getarcane.dev/arcane/v3/internal/config"
@@ -43,13 +42,11 @@ import (
 	"getarcane.dev/arcane/v3/internal/docker"
 	"getarcane.dev/arcane/v3/internal/event"
 	imagedomain "getarcane.dev/arcane/v3/internal/image"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/kv"
 	"getarcane.dev/arcane/v3/internal/podman"
 	"getarcane.dev/arcane/v3/internal/project"
 	"getarcane.dev/arcane/v3/internal/settings"
 	"getarcane.dev/arcane/v3/pkg/httpx"
-	"getarcane.dev/arcane/v3/pkg/imageref"
 	"getarcane.dev/arcane/v3/pkg/pagination"
 	libpodman "getarcane.dev/arcane/v3/pkg/podman"
 	"getarcane.dev/arcane/v3/pkg/projects"
@@ -180,12 +177,11 @@ func TestContainerSummaryIconsAppliedAfterGrouping(t *testing.T) {
 			projects.ArcaneIconLabel:     "immich",
 		}},
 		{ID: "db", Names: []string{"/db"}, Labels: map[string]string{
-			"com.docker.compose.project":      "media",
-			"com.getarcaneapp.arcane.updater": "false",
+			"com.docker.compose.project": "media",
 		}},
 	}
 
-	items := service.BuildSummaries(t.Context(), dockerContainers, nil, "", nil)
+	items := BuildSummaries(dockerContainers, "", nil)
 	for _, item := range items {
 		require.Empty(t, item.IconLightURL, "icons must be deferred until after pagination")
 	}
@@ -202,9 +198,6 @@ func TestContainerSummaryIconsAppliedAfterGrouping(t *testing.T) {
 	require.Len(t, groups, 1)
 	require.NotEmpty(t, groups[0].Items[0].IconLightURL)
 	require.NotEmpty(t, flattened[0].IconLightURL, "flattened items must carry icons applied to the groups")
-	for _, item := range flattened {
-		require.Equal(t, item.ID != "db", item.AutoUpdateEnabled, "grouped items carry the label-derived auto-update status for %s", item.ID)
-	}
 }
 
 func groupNamesOf(groups []types.ContainerSummaryGroup) []string {
@@ -231,16 +224,15 @@ func TestGroupContainersByProjectUsesNoProjectBucket(t *testing.T) {
 
 func TestBuildContainerFilterAccessors_FiltersStandaloneContainers(t *testing.T) {
 	service := &ContainerService{}
-	updateInfo := &types.ImageUpdateInfo{HasUpdate: true}
 	items := []types.ContainerSummary{
-		{ID: "standalone", Labels: map[string]string{}, UpdateInfo: updateInfo},
-		{ID: "compose", Labels: map[string]string{"com.docker.compose.project": "alpha"}, UpdateInfo: updateInfo},
-		{ID: "swarm-task", Labels: map[string]string{"com.docker.swarm.service.name": "web"}, UpdateInfo: updateInfo},
+		{ID: "standalone", Labels: map[string]string{}},
+		{ID: "compose", Labels: map[string]string{"com.docker.compose.project": "alpha"}},
+		{ID: "swarm-task", Labels: map[string]string{"com.docker.swarm.service.name": "web"}},
 	}
 
 	result := pagination.Config[types.ContainerSummary]{FilterAccessors: service.buildContainerPaginationConfig().FilterAccessors}.SearchOrderAndPaginate(
 		items,
-		pagination.QueryParams{Filters: map[string]string{"standalone": "true", "updates": "has_update"}},
+		pagination.QueryParams{Filters: map[string]string{"standalone": "true"}},
 	)
 
 	require.Len(t, result.Items, 1)
@@ -480,7 +472,7 @@ func setupProjectTestDB(t *testing.T) *database.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&project.Project{}, &settings.SettingVariable{}, &imageupdate.ImageUpdateRecord{}, &event.Event{}, &kv.KVEntry{}))
+	require.NoError(t, db.AutoMigrate(&project.Project{}, &settings.SettingVariable{}, &event.Event{}, &kv.KVEntry{}))
 	return &database.DB{DB: db}
 }
 
@@ -1038,52 +1030,6 @@ func TestRecoverInterruptedRedeploys(t *testing.T) {
 	}
 }
 
-func TestBuildSummariesUsesContainerTagPolicyUpdates(t *testing.T) {
-	settingsService, err := settings.NewSettingsService(settings.SettingsServiceParams{
-		Ctx:    t.Context(),
-		DB:     setupProjectTestDB(t),
-		Config: &config.Config{},
-		Env:    settings.Env{},
-	})
-	require.NoError(t, err)
-	service := NewContainerService(ContainerServiceParams{
-		SettingsService: settingsService,
-	})
-	strategyLabel := "com.getarcaneapp.arcane.updater.strategy"
-	containers := []container.Summary{
-		{ID: "first", Image: "app:3.1.0", ImageID: "shared-image"},
-		{ID: "second", Image: "app:3.1.0", ImageID: "shared-image", Labels: map[string]string{strategyLabel: "auto"}},
-		{ID: "unchecked", Image: "app:3.1.0", ImageID: "shared-image", Labels: map[string]string{strategyLabel: "tag"}},
-		{ID: "digest", Image: "app:3.1.0", ImageID: "shared-image", Labels: map[string]string{strategyLabel: "digest"}},
-		{ID: "opted-out", Names: []string{"/opted-out"}, Image: "app:3.1.0", ImageID: "shared-image", Labels: map[string]string{"com.getarcaneapp.arcane.updater": "false"}},
-		{ID: "unmonitored", Image: "app:3.1.0", ImageID: "shared-image", Labels: map[string]string{"com.getarcaneapp.arcane.update-check": "false"}},
-	}
-	// The lookup keys results by container ID; containers opted out of checks have no entry.
-	updates := map[string]*types.ImageUpdateInfo{
-		"first":     {HasUpdate: true, UpdateType: "digest"},
-		"second":    {HasUpdate: true, UpdateType: "tag", LatestVersion: "4.0.0"},
-		"digest":    {HasUpdate: true, UpdateType: "digest"},
-		"opted-out": {HasUpdate: true, UpdateType: "digest"},
-	}
-	items := service.BuildSummaries(t.Context(), containers, updates, "", nil)
-	require.Equal(t, "digest", items[0].UpdateStrategy, "an unlabeled container follows the digest")
-	require.Equal(t, "tag", items[1].UpdateStrategy)
-	require.Equal(t, "digest", items[3].UpdateStrategy)
-	require.Equal(t, "digest", items[0].UpdateInfo.UpdateType)
-	require.Equal(t, "4.0.0", items[1].UpdateInfo.LatestVersion)
-	require.Nil(t, items[2].UpdateInfo)
-	require.Equal(t, "digest", items[3].UpdateInfo.UpdateType)
-
-	require.True(t, items[0].AutoUpdateEnabled, "containers without opt-out are eligible")
-	require.False(t, items[4].AutoUpdateEnabled, "the updater label disables auto-update")
-	require.Equal(t, "digest", items[4].UpdateInfo.UpdateType, "disabling automatic updates keeps check results visible")
-	require.Nil(t, items[5].UpdateInfo, "a container without a lookup result reports no status")
-	require.True(t, items[5].AutoUpdateEnabled, "the update-check label does not affect installation eligibility")
-	encoded, err := json.Marshal(items[4])
-	require.NoError(t, err)
-	require.Contains(t, string(encoded), `"autoUpdateEnabled":false`, "false status must stay serialized")
-}
-
 func TestContainerServiceGetContainerProcesses(t *testing.T) {
 	tests := []struct {
 		fallback *struct {
@@ -1394,14 +1340,12 @@ func TestResourceSortRanksMemoryByBytesNotPercent(t *testing.T) {
 	fixture.setStats("high-percent", 10, 800, 1000)
 	fixture.addContainer("high-bytes", "high-bytes", "running")
 	fixture.setStats("high-bytes", 10, 900, 10000)
-	fixture.addContainer("opted-out", "opted-out", "running", map[string]string{"com.getarcaneapp.arcane.updater": "false"})
+	fixture.addContainer("opted-out", "opted-out", "running")
 	fixture.setStats("opted-out", 10, 100, 10000)
 	svc := newResourceSortService(t, fixture)
 
 	result := listResourceSorted(t, svc, resourceSortParams(types.ContainerSortMemoryUsage, "desc", 0, 20))
 	require.Equal(t, []string{"high-bytes", "high-percent", "opted-out"}, summaryIDs(result.Items))
-	require.True(t, result.Items[0].AutoUpdateEnabled)
-	require.False(t, result.Items[2].AutoUpdateEnabled)
 
 	result = listResourceSorted(t, svc, resourceSortParams(types.ContainerSortMemoryUsage, "asc", 0, 20))
 	require.Equal(t, []string{"opted-out", "high-percent", "high-bytes"}, summaryIDs(result.Items))
@@ -1409,15 +1353,6 @@ func TestResourceSortRanksMemoryByBytesNotPercent(t *testing.T) {
 	flat, err := svc.ListContainersPaginated(t.Context(), resourceSortParams("name", "asc", 0, 20), true, true, true, "")
 	require.NoError(t, err)
 	require.Equal(t, []string{"high-bytes", "high-percent", "opted-out"}, summaryIDs(flat.Items))
-	require.True(t, flat.Items[0].AutoUpdateEnabled)
-	require.False(t, flat.Items[2].AutoUpdateEnabled)
-
-	details, err := svc.GetContainerDetails(t.Context(), "opted-out")
-	require.NoError(t, err)
-	require.False(t, details.AutoUpdateEnabled, "detail status must match the list status")
-	details, err = svc.GetContainerDetails(t.Context(), "high-bytes")
-	require.NoError(t, err)
-	require.True(t, details.AutoUpdateEnabled)
 }
 
 func TestResourceSortOrdersAcrossPages(t *testing.T) {
@@ -2020,57 +1955,6 @@ func TestContainerMutationsRefuseQuadletContainers(t *testing.T) {
 	require.Empty(t, systemd.calls)
 }
 
-func TestPendingContainerCountUsesScopedTagRecords(t *testing.T) {
-	db := setupProjectTestDB(t)
-	tagLabels := map[string]string{labels.LabelUpdateStrategy: "auto"}
-	records := []imageupdate.ImageUpdateRecord{
-		{ID: "shared", Repository: "docker.io/library/app", Tag: "stable", HasUpdate: true, UpdateType: "digest"},
-		{ID: "container::first", PolicyKey: imageref.UpdatePolicyKey("app:1.2.3", tagLabels), ContainerID: "first", ImageID: "shared", HasUpdate: true, UpdateType: "tag"},
-		{
-			ID: "container::other-project",
-			PolicyKey: imageref.UpdatePolicyKey(
-				"app:1.2.3",
-				tagLabels,
-			),
-			ContainerID: "other-project",
-			ImageID:     "shared",
-			HasUpdate:   true,
-			UpdateType:  "tag",
-		},
-	}
-	require.NoError(t, db.Create(&records).Error)
-	service := &ContainerService{imageService: imagedomain.NewImageService(imagedomain.ImageServiceParams{
-		DB: db,
-	})}
-	containers := []container.Summary{
-		{ID: "first", Image: "app:1.2.3", ImageID: "shared", Labels: map[string]string{labels.LabelUpdateStrategy: "auto"}},
-		{ID: "unchecked", Image: "app:1.2.3", ImageID: "shared", Labels: map[string]string{labels.LabelUpdateStrategy: "auto"}},
-	}
-	count, err := service.CountPendingUpdates(t.Context(), containers)
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
-	containers = append(containers, container.Summary{ID: "digest", Image: "app:latest", ImageID: "shared"})
-	count, err = service.CountPendingUpdates(t.Context(), containers)
-	require.NoError(t, err)
-	require.Equal(t, 2, count, "a digest record under another tag of the running image counts")
-	containers = append(containers, container.Summary{ID: "digest-twin", Image: "app:latest", ImageID: "shared"})
-	count, err = service.CountPendingUpdates(t.Context(), containers)
-	require.NoError(t, err)
-	require.Equal(t, 3, count, "separate containers sharing one image each count once")
-	containers[0].Labels[labels.LabelUpdater] = "off"
-	count, err = service.CountPendingUpdates(t.Context(), containers)
-	require.NoError(t, err)
-	require.Equal(t, 3, count, "disabling automatic installation keeps the pending update visible")
-	containers[0].Labels[imageref.UpdateCheckLabel] = "false"
-	count, err = service.CountPendingUpdates(t.Context(), containers)
-	require.NoError(t, err)
-	require.Equal(t, 2, count, "disabling update checks suppresses the result")
-	containers[2].ImageID = ""
-	count, err = service.CountPendingUpdates(t.Context(), containers)
-	require.NoError(t, err)
-	require.Equal(t, 1, count, "a missing runtime image ID inherits no digest check")
-}
-
 func TestAggregateContainerCountsSumsEnvironments(t *testing.T) {
 	ctx, _ := containerScopeContext(t, "/api/agents/a,b,c/containers/counts", map[string]any{
 		"a": types.ApiResponse[types.ContainerStatusCounts]{
@@ -2079,7 +1963,6 @@ func TestAggregateContainerCountsSumsEnvironments(t *testing.T) {
 				RunningContainers: 2,
 				StoppedContainers: 1,
 				TotalContainers:   3,
-				UpdatesAvailable:  1,
 			},
 		},
 		"b": types.ApiResponse[types.ContainerStatusCounts]{
@@ -2087,7 +1970,6 @@ func TestAggregateContainerCountsSumsEnvironments(t *testing.T) {
 			Data: types.ContainerStatusCounts{
 				RunningContainers: 1,
 				TotalContainers:   1,
-				UpdatesAvailable:  2,
 			},
 		},
 	})
@@ -2099,10 +1981,9 @@ func TestAggregateContainerCountsSumsEnvironments(t *testing.T) {
 		RunningContainers: 3,
 		StoppedContainers: 1,
 		TotalContainers:   4,
-		UpdatesAvailable:  3,
 	}, body.Data)
 	require.Len(t, body.Environments, 2)
-	require.Equal(t, 2, body.Environments[1].Data.UpdatesAvailable)
+	require.Equal(t, 1, body.Environments[1].Data.TotalContainers)
 	require.Len(t, body.FailedEnvironments, 1)
 }
 

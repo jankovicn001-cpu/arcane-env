@@ -380,7 +380,6 @@ html.reduce-effects *::after {
 	--color-warning: var(--warning);
 	--color-warning-foreground: var(--warning-foreground);
 	--color-info: var(--info);
-	--color-update: var(--info);
 	--color-orange: var(--orange);
 	--color-orange-foreground: var(--orange-foreground);
 	--color-lime: var(--lime);
@@ -417,7 +416,6 @@ html.reduce-effects *::after {
 	--text-form-control: 16px;
 	--spacing-touch-target: 44px;
 	--spacing-stat-ring: 38px;
-	--spacing-table-update: 8rem;
 	--spacing-table-security: 10rem;
 	--container-settings-description: 65ch;
 	--tracking-ultrawide: 0.2em;

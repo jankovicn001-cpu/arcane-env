@@ -72,16 +72,10 @@ func fetchWebhook(t *testing.T, db *database.DB, id string) Webhook {
 }
 
 func defaultTestWebhookActionType(targetType string) string {
-	switch targetType {
-	case WebhookTargetTypeContainer, WebhookTargetTypeProject:
-		return WebhookActionTypeUpdate
-	case WebhookTargetTypeUpdater:
-		return WebhookActionTypeRun
-	case WebhookTargetTypeGitOps:
+	if targetType == WebhookTargetTypeGitOps {
 		return WebhookActionTypeSync
-	default:
-		return WebhookActionTypeUpdate
 	}
+	return WebhookActionTypeRedeploy
 }
 
 func TestWebhookTokenFormat(t *testing.T) {
@@ -133,7 +127,7 @@ func TestIsKnownToken_StoredIdentity(t *testing.T) {
 	ctx := t.Context()
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
-	wh, raw, err := svc.CreateWebhook(ctx, "known", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	wh, raw, err := svc.CreateWebhook(ctx, "known", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 	require.True(t, svc.IsKnownToken(raw))
 
@@ -161,9 +155,9 @@ func TestKnownTokenRateLimit_ExhaustedIPDoesNotBlockFirstUse(t *testing.T) {
 	ctx := t.Context()
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
-	_, first, err := svc.CreateWebhook(ctx, "first", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	_, first, err := svc.CreateWebhook(ctx, "first", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
-	_, second, err := svc.CreateWebhook(ctx, "second", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p2", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	_, second, err := svc.CreateWebhook(ctx, "second", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p2", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 	svc = newTestWebhookService(db)
 	require.NoError(t, svc.LoadTokenHashes(ctx))
@@ -199,12 +193,12 @@ func TestLoadTokenHashes_FailurePreservesIndex(t *testing.T) {
 	ctx := t.Context()
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
-	_, raw, err := svc.CreateWebhook(ctx, "known", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	_, raw, err := svc.CreateWebhook(ctx, "known", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 	require.NoError(t, db.Migrator().DropTable(&Webhook{}))
 	require.Error(t, svc.LoadTokenHashes(ctx))
 	require.True(t, svc.IsKnownToken(raw))
-	_, failed, err := svc.CreateWebhook(ctx, "failed", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	_, failed, err := svc.CreateWebhook(ctx, "failed", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.Error(t, err)
 	require.Empty(t, failed)
 	require.Len(t, svc.tokenHashes, 1)
@@ -224,7 +218,7 @@ func TestKnownTokenIndex_ConcurrentReloadAndCRUD(t *testing.T) {
 		}
 	})
 	for range 30 {
-		wh, raw, err := svc.CreateWebhook(ctx, "known", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+		wh, raw, err := svc.CreateWebhook(ctx, "known", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 		require.NoError(t, err)
 		require.True(t, svc.IsKnownToken(raw))
 		require.NoError(t, svc.DeleteWebhook(ctx, wh.ID, "env-1", types.Actor{}))
@@ -238,7 +232,7 @@ func TestCreateWebhook_TokenNotStoredInPlaintext(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	wh, rawToken, err := svc.CreateWebhook(ctx, "my-hook", WebhookTargetTypeProject, WebhookActionTypeUpdate, "project-id", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	wh, rawToken, err := svc.CreateWebhook(ctx, "my-hook", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "project-id", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 	require.NotEmpty(t, rawToken)
 
@@ -252,7 +246,7 @@ func TestCreateWebhook_PrefixMatchesToken(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	wh, rawToken, err := svc.CreateWebhook(ctx, "  cafe\u0301 hook  ", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	wh, rawToken, err := svc.CreateWebhook(ctx, "  cafe\u0301 hook  ", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	hexPart := strings.TrimPrefix(rawToken, webhookTokenPrefix)
@@ -269,11 +263,11 @@ func TestCreateWebhook_InvalidTargetTypeRejected(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	_, _, err := svc.CreateWebhook(ctx, "bad", "invalid-type", WebhookActionTypeUpdate, "c1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	_, _, err := svc.CreateWebhook(ctx, "bad", "invalid-type", WebhookActionTypeRedeploy, "c1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	assert.ErrorIs(t, err, ErrWebhookInvalidType)
 }
 
-func TestCreateWebhook_EmptyTargetIDRejectedForNonUpdaterTypes(t *testing.T) {
+func TestCreateWebhook_EmptyTargetIDRejected(t *testing.T) {
 	ctx := t.Context()
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
@@ -297,28 +291,15 @@ func TestCreateWebhook_InvalidActionTypeRejected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrWebhookInvalidAction)
 }
 
-func TestCreateWebhook_EmptyActionTypeDefaultsPerTarget(t *testing.T) {
+func TestCreateWebhook_EmptyActionTypeRejectedForResourceTargets(t *testing.T) {
 	ctx := t.Context()
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	projectWebhook, _, err := svc.CreateWebhook(ctx, "project-hook", WebhookTargetTypeProject, "", "project-id", "env-1", types.Actor{}, authz.SudoPermissionSet())
-	require.NoError(t, err)
-	assert.Equal(t, WebhookActionTypeUpdate, projectWebhook.ActionType)
-
-	updaterWebhook, _, err := svc.CreateWebhook(ctx, "updater-hook", WebhookTargetTypeUpdater, "", "", "env-1", types.Actor{}, authz.SudoPermissionSet())
-	require.NoError(t, err)
-	assert.Equal(t, WebhookActionTypeRun, updaterWebhook.ActionType)
-}
-
-func TestCreateWebhook_EmptyTargetIDAcceptedForUpdaterType(t *testing.T) {
-	ctx := t.Context()
-	db := setupWebhookServiceTestDB(t)
-	svc := newTestWebhookService(db)
-
-	wh, _, err := svc.CreateWebhook(ctx, "updater-hook", WebhookTargetTypeUpdater, WebhookActionTypeRun, "", "env-1", types.Actor{}, authz.SudoPermissionSet())
-	require.NoError(t, err)
-	assert.Empty(t, wh.TargetID)
+	for _, targetType := range []string{WebhookTargetTypeContainer, WebhookTargetTypeProject} {
+		_, _, err := svc.CreateWebhook(ctx, "hook", targetType, "", "target-id", "env-1", types.Actor{}, authz.SudoPermissionSet())
+		assert.ErrorIs(t, err, ErrWebhookInvalidAction, "expected ErrWebhookInvalidAction for type %s without an action", targetType)
+	}
 }
 
 func TestCreateWebhook_ContainerTypeAccepted(t *testing.T) {
@@ -326,10 +307,10 @@ func TestCreateWebhook_ContainerTypeAccepted(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	wh, _, err := svc.CreateWebhook(ctx, "container-hook", WebhookTargetTypeContainer, WebhookActionTypeUpdate, "container-id", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	wh, _, err := svc.CreateWebhook(ctx, "container-hook", WebhookTargetTypeContainer, WebhookActionTypeRedeploy, "container-id", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 	assert.Equal(t, WebhookTargetTypeContainer, wh.TargetType)
-	assert.Equal(t, WebhookActionTypeUpdate, wh.ActionType)
+	assert.Equal(t, WebhookActionTypeRedeploy, wh.ActionType)
 }
 
 func TestCreateWebhook_GitOpsTypeAccepted(t *testing.T) {
@@ -353,9 +334,9 @@ func TestListWebhooks_ScopedToEnvironment(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	_, _, err := svc.CreateWebhook(ctx, "env1-hook", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	_, _, err := svc.CreateWebhook(ctx, "env1-hook", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
-	_, _, err = svc.CreateWebhook(ctx, "env2-hook", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p2", "env-2", types.Actor{}, authz.SudoPermissionSet())
+	_, _, err = svc.CreateWebhook(ctx, "env2-hook", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p2", "env-2", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	list, err := svc.ListWebhooks(ctx, "env-1")
@@ -387,16 +368,14 @@ func TestListWebhookSummaries_ResolvesTargetNames(t *testing.T) {
 		"sync-1", types.LocalDockerEnvironmentID, "Deploy Sync", types.GitOpsSyncModeDeploy,
 	).Error)
 
-	_, _, err := svc.CreateWebhook(ctx, "project-hook", WebhookTargetTypeProject, WebhookActionTypeUpdate, "project-1", types.LocalDockerEnvironmentID, types.Actor{}, authz.SudoPermissionSet())
-	require.NoError(t, err)
-	_, _, err = svc.CreateWebhook(ctx, "updater-hook", WebhookTargetTypeUpdater, WebhookActionTypeRun, "", types.LocalDockerEnvironmentID, types.Actor{}, authz.SudoPermissionSet())
+	_, _, err := svc.CreateWebhook(ctx, "project-hook", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "project-1", types.LocalDockerEnvironmentID, types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 	_, _, err = svc.CreateWebhook(ctx, "gitops-hook", WebhookTargetTypeGitOps, WebhookActionTypeSync, "sync-1", types.LocalDockerEnvironmentID, types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	summaries, _, err := svc.ListWebhookSummaries(ctx, types.LocalDockerEnvironmentID, pagination.QueryParams{})
 	require.NoError(t, err)
-	require.Len(t, summaries, 3)
+	require.Len(t, summaries, 2)
 
 	targetNamesByType := make(map[string]string, len(summaries))
 	for _, summary := range summaries {
@@ -405,31 +384,7 @@ func TestListWebhookSummaries_ResolvesTargetNames(t *testing.T) {
 	}
 
 	assert.Equal(t, "Main Project", targetNamesByType[WebhookTargetTypeProject])
-	assert.Equal(t, "Environment updater", targetNamesByType[WebhookTargetTypeUpdater])
 	assert.Equal(t, "Deploy Sync", targetNamesByType[WebhookTargetTypeGitOps])
-}
-
-func TestListWebhookSummaries_DefaultsLegacyActionType(t *testing.T) {
-	ctx := t.Context()
-	db := setupWebhookServiceTestDB(t)
-	svc := newTestWebhookService(db)
-
-	legacyWebhook := &Webhook{
-		Name:          "legacy-hook",
-		TokenHash:     "hash",
-		TokenPrefix:   "arc_wh_deadbeef",
-		TargetType:    WebhookTargetTypeProject,
-		ActionType:    "",
-		TargetID:      "project-1",
-		EnvironmentID: types.LocalDockerEnvironmentID,
-		Enabled:       true,
-	}
-	require.NoError(t, db.WithContext(ctx).Create(legacyWebhook).Error)
-
-	summaries, _, err := svc.ListWebhookSummaries(ctx, types.LocalDockerEnvironmentID, pagination.QueryParams{})
-	require.NoError(t, err)
-	require.Len(t, summaries, 1)
-	assert.Equal(t, WebhookActionTypeUpdate, summaries[0].ActionType)
 }
 
 func TestGetWebhookByID_ReturnsCorrectWebhook(t *testing.T) {
@@ -437,7 +392,7 @@ func TestGetWebhookByID_ReturnsCorrectWebhook(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	created, _, err := svc.CreateWebhook(ctx, "get-me", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	created, _, err := svc.CreateWebhook(ctx, "get-me", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	got, err := svc.GetWebhookByID(ctx, created.ID, "env-1")
@@ -450,7 +405,7 @@ func TestGetWebhookByID_NotFoundForWrongEnvironment(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	created, _, err := svc.CreateWebhook(ctx, "env-scoped", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	created, _, err := svc.CreateWebhook(ctx, "env-scoped", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	_, err = svc.GetWebhookByID(ctx, created.ID, "env-2")
@@ -471,7 +426,7 @@ func TestDeleteWebhook_RemovesRecord(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	created, _, err := svc.CreateWebhook(ctx, "delete-me", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	created, _, err := svc.CreateWebhook(ctx, "delete-me", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	require.NoError(t, svc.DeleteWebhook(ctx, created.ID, "env-1", types.Actor{}))
@@ -485,7 +440,7 @@ func TestDeleteWebhook_NotFoundForWrongEnvironment(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	created, _, err := svc.CreateWebhook(ctx, "env-scoped-delete", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	created, _, err := svc.CreateWebhook(ctx, "env-scoped-delete", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	err = svc.DeleteWebhook(ctx, created.ID, "env-2", types.Actor{})
@@ -509,7 +464,7 @@ func TestUpdateWebhook_DisableAndEnable(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	wh, _, err := svc.CreateWebhook(ctx, "hook", WebhookTargetTypeProject, WebhookActionTypeUpdate, "proj-1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	wh, _, err := svc.CreateWebhook(ctx, "hook", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "proj-1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 	assert.True(t, wh.Enabled)
 
@@ -527,7 +482,7 @@ func TestUpdateWebhook_NotFoundForWrongEnvironment(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	wh, _, err := svc.CreateWebhook(ctx, "hook", WebhookTargetTypeProject, WebhookActionTypeUpdate, "proj-1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	wh, _, err := svc.CreateWebhook(ctx, "hook", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "proj-1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	_, err = svc.UpdateWebhook(ctx, wh.ID, "env-other", types.Webhook{}, map[string]bool{"enabled": true}, types.Actor{}, authz.SudoPermissionSet())
@@ -593,7 +548,7 @@ func TestTriggerByToken_WrongHash_NotFound(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	_, rawToken, err := svc.CreateWebhook(ctx, "hash-check", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	_, rawToken, err := svc.CreateWebhook(ctx, "hash-check", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	tampered := rawToken[:len(rawToken)-1]
@@ -612,7 +567,7 @@ func TestTriggerByToken_DisabledWebhook(t *testing.T) {
 	db := setupWebhookServiceTestDB(t)
 	svc := newTestWebhookService(db)
 
-	created, rawToken, err := svc.CreateWebhook(ctx, "disabled-hook", WebhookTargetTypeProject, WebhookActionTypeUpdate, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
+	created, rawToken, err := svc.CreateWebhook(ctx, "disabled-hook", WebhookTargetTypeProject, WebhookActionTypeRedeploy, "p1", "env-1", types.Actor{}, authz.SudoPermissionSet())
 	require.NoError(t, err)
 
 	require.NoError(t, db.WithContext(ctx).Model(&Webhook{}).Where("id = ?", created.ID).Update("enabled", false).Error)
@@ -670,7 +625,7 @@ func TestTriggerByToken_AcceptsImmediatelyAndRecordsTriggerTime(t *testing.T) {
 	svc := newTestWebhookService(db) // action services are nil; the async action fails, acceptance must not
 
 	rawToken := "arc_wh_ccddeeff01020304aabbccdd0102030405060708090a0b0c0d0e0f1011121314"
-	wh := insertWebhookDirect(t, ctx, db, rawToken, WebhookTargetTypeContainer, WebhookActionTypeUpdate, "container-id", types.LocalDockerEnvironmentID)
+	wh := insertWebhookDirect(t, ctx, db, rawToken, WebhookTargetTypeContainer, WebhookActionTypeRedeploy, "container-id", types.LocalDockerEnvironmentID)
 
 	// Valid token is accepted synchronously; the action itself runs (and here
 	// fails against nil services) in the background without surfacing.
@@ -686,7 +641,7 @@ func TestTriggerByToken_DoesNotUpdateLastTriggeredAtOnError(t *testing.T) {
 	svc := newTestWebhookService(db)
 
 	rawToken := "arc_wh_1122334401020304aabbccdd0102030405060708090a0b0c0d0e0f1011121315"
-	wh := insertWebhookDirect(t, ctx, db, rawToken, "unknown-type", WebhookActionTypeUpdate, "some-id", "env-1")
+	wh := insertWebhookDirect(t, ctx, db, rawToken, "unknown-type", WebhookActionTypeRedeploy, "some-id", "env-1")
 
 	err := svc.TriggerByToken(ctx, rawToken)
 	require.Error(t, err)
@@ -715,15 +670,13 @@ func TestRemoteWebhookRequest(t *testing.T) {
 		wantMethod string
 		wantPath   string
 		wh         Webhook
-		wantResult bool
 	}{
 		{
-			name:       "container update prefers target ref",
+			name:       "container redeploy prefers target ref",
 			wh:         Webhook{TargetType: WebhookTargetTypeContainer, TargetID: "abc123", TargetRef: "my-app"},
-			actionType: WebhookActionTypeUpdate,
+			actionType: WebhookActionTypeRedeploy,
 			wantMethod: "POST",
-			wantPath:   "/api/agents/0/containers/my-app/update",
-			wantResult: true,
+			wantPath:   "/api/agents/0/containers/my-app/redeploy",
 		},
 		{
 			name:       "container start falls back to target id",
@@ -733,11 +686,11 @@ func TestRemoteWebhookRequest(t *testing.T) {
 			wantPath:   "/api/agents/0/containers/abc123?action=start",
 		},
 		{
-			name:       "project update maps to updateservices action",
+			name:       "project redeploy maps to the deploy action",
 			wh:         Webhook{TargetType: WebhookTargetTypeProject, TargetID: "p1"},
-			actionType: WebhookActionTypeUpdate,
+			actionType: WebhookActionTypeRedeploy,
 			wantMethod: "POST",
-			wantPath:   "/api/agents/0/projects/p1?action=updateservices",
+			wantPath:   "/api/agents/0/projects/p1/deploy?action=redeploy",
 		},
 		{
 			name:       "gitops sync",
@@ -745,14 +698,6 @@ func TestRemoteWebhookRequest(t *testing.T) {
 			actionType: WebhookActionTypeSync,
 			wantMethod: "POST",
 			wantPath:   "/api/agents/0/gitops/syncs/sync-1?action=sync",
-		},
-		{
-			name:       "updater run carries result",
-			wh:         Webhook{TargetType: WebhookTargetTypeUpdater},
-			actionType: WebhookActionTypeRun,
-			wantMethod: "POST",
-			wantPath:   "/api/agents/0/updater/run?automatic=true",
-			wantResult: true,
 		},
 		{
 			name:       "invalid action rejected",
@@ -764,7 +709,7 @@ func TestRemoteWebhookRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			method, path, wantResult, err := remoteWebhookRequest(&tt.wh, tt.actionType)
+			method, path, err := remoteWebhookRequest(&tt.wh, tt.actionType)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 				return
@@ -772,7 +717,6 @@ func TestRemoteWebhookRequest(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantMethod, method)
 			assert.Equal(t, tt.wantPath, path)
-			assert.Equal(t, tt.wantResult, wantResult)
 		})
 	}
 }

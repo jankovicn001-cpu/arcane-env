@@ -17,6 +17,7 @@ type (
 		DefaultProjectEditorLayout *string `json:"defaultProjectEditorLayout,omitempty" enum:"auto,classic,tree" doc:"Initial layout of the project editor; auto keeps workspace detection"`
 		EditorTabWidth             *int    `json:"editorTabWidth,omitempty" enum:"2,4,8" doc:"Spaces per indentation level in code editors and when formatting documents"`
 		ToastPosition              *string `json:"toastPosition,omitempty" enum:"auto,top-left,top-right,top-center,bottom-left,bottom-right,bottom-center" doc:"Toast notification position"`
+		EnvironmentFirstNavigation *bool   `json:"environmentFirstNavigation,omitempty" doc:"Hide the all-environments resource pages from navigation"`
 		// A pointer so the merge-only preferences update replaces the whole map.
 		EnvironmentColors     *map[string]string       `json:"environmentColors,omitempty" doc:"Environment label color by environment ID"`
 		EnvironmentLabelStyle *string                  `json:"environmentLabelStyle,omitempty" enum:"name,dot" doc:"How resource lists label environments"`
@@ -97,9 +98,10 @@ type (
 	}
 
 	RoleAssignmentSummary struct {
-		RoleID        string  `json:"roleId" doc:"Role ID granted by this assignment"`
-		EnvironmentID *string `json:"environmentId,omitempty" doc:"Environment ID this assignment is scoped to; omit for a global assignment"`
-		Source        string  `json:"source" doc:"How the assignment was created" enum:"manual,oidc,ldap"`
+		RoleID             string  `json:"roleId" doc:"Role ID granted by this assignment"`
+		EnvironmentID      *string `json:"environmentId,omitempty" doc:"Environment ID this assignment is scoped to; omit for a global assignment"`
+		EnvironmentGroupID *string `json:"environmentGroupId,omitempty" doc:"Environment group ID this assignment is scoped to; applies to every agent in the group"`
+		Source             string  `json:"source" doc:"How the assignment was created" enum:"manual,oidc,ldap"`
 	}
 
 	User struct {
@@ -121,6 +123,7 @@ type (
 		CreatedAt              string                  `json:"createdAt,omitempty" readOnly:"true" doc:"Date and time when the user was created"`
 		UpdatedAt              string                  `json:"updatedAt,omitempty" readOnly:"true" doc:"Date and time when the user was last updated"`
 		RoleAssignments        []RoleAssignmentSummary `json:"roleAssignments" readOnly:"true" doc:"Role assignments held by the user"`
+		UserGroups             []UserGroupRef          `json:"userGroups" readOnly:"true" doc:"User groups the user belongs to, from every source"`
 		IsGlobalAdmin          bool                    `json:"isGlobalAdmin" readOnly:"true" doc:"Whether the user effectively holds global administrator access"`
 		CanDelete              bool                    `json:"canDelete" readOnly:"true" doc:"Whether the user can currently be deleted"`
 		RequiresPasswordChange bool                    `json:"requiresPasswordChange" readOnly:"true" doc:"Whether the user must change their password"`

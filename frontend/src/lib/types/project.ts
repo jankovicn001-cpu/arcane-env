@@ -1,4 +1,3 @@
-import type { ImageUpdateInfo } from './image';
 import type { WorkspaceFileChange } from './workspace';
 
 export interface ProjectIncludeFile {
@@ -96,28 +95,6 @@ export interface ProjectRuntimeService {
 	redeployDisabled?: boolean;
 }
 
-export interface ProjectServiceUpdateInfo {
-	imageRef: string;
-	updateInfo?: ImageUpdateInfo;
-}
-
-export interface ProjectUpdateInfo {
-	status: 'has_update' | 'up_to_date' | 'not_pulled' | 'unknown' | 'error';
-	hasUpdate: boolean;
-	imageCount: number;
-	checkedImageCount: number;
-	imagesWithUpdates: number;
-	imagesNotPulled: number;
-	errorCount: number;
-	errorMessage?: string;
-	imageRefs?: string[];
-	updatedImageRefs?: string[];
-	notPulledImageRefs?: string[];
-	updateInfoByRef?: Record<string, ImageUpdateInfo>;
-	serviceUpdates?: Record<string, ProjectServiceUpdateInfo>;
-	lastCheckedAt?: string;
-}
-
 export type ProjectConfigurationError = {
 	code: 'env_file_unreadable';
 	path: string;
@@ -155,7 +132,6 @@ export interface Project {
 	hasBuildDirective?: boolean;
 	redeployDisabled?: boolean;
 	activityId?: string;
-	updateInfo?: ProjectUpdateInfo;
 	services?: ProjectService[];
 	runtimeServices?: ProjectRuntimeService[];
 	jobs?: ProjectJob[];
@@ -174,7 +150,6 @@ export interface ProjectStatusCounts {
 	stoppedProjects: number;
 	totalProjects: number;
 	archivedProjects: number;
-	updatesAvailable: number;
 }
 
 export type ProjectDeployOptions = {

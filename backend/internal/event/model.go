@@ -101,8 +101,6 @@ const (
 	EventTypeUserLogin                    EventType     = "user.login"
 	EventTypeUserLogout                   EventType     = "user.logout"
 	EventTypeFederatedExchange            EventType     = "federated.exchange"
-	EventTypeSystemAutoUpdate             EventType     = "system.auto_update"
-	EventTypeSystemUpgrade                EventType     = "system.upgrade"
 	EventTypeEnvironmentCreate            EventType     = "environment.create"
 	EventTypeEnvironmentConnect           EventType     = "environment.connect"
 	EventTypeEnvironmentDisconnect        EventType     = "environment.disconnect"

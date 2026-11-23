@@ -56,7 +56,10 @@ func newListCmd() *cobra.Command {
 					rows := make([][]string, len(data))
 					for i, m := range data {
 						scope := "global"
-						if m.EnvironmentID != nil {
+						switch {
+						case m.EnvironmentGroupID != nil:
+							scope = "environment-group:" + *m.EnvironmentGroupID
+						case m.EnvironmentID != nil:
 							scope = *m.EnvironmentID
 						}
 						rows[i] = []string{m.ID, m.ClaimValue, m.RoleID, scope}

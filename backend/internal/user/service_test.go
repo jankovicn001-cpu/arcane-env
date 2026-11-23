@@ -53,8 +53,19 @@ func setupAuthServiceTestDB(t *testing.T) *database.DB {
 		db.Exec("CREATE TABLE IF NOT EXISTS environments (id text PRIMARY KEY, created_at datetime, updated_at dateti"+
 			"me, name text, api_url text, status text, enabled numeric, hidden numeric, last_see"+
 			"n datetime, last_agent_transport text, access_token text, api_key_id text, parent_environment_id text"+
-			", swarm_node_id text)").Error,
+			", swarm_node_id text, group_id text)").Error,
 	)
+	require.NoError(t, db.Exec("CREATE TABLE IF NOT EXISTS environment_groups (id text PRIMARY KEY, name text)").Error)
+	// User group tables belong to a role child package; permission resolution only needs them to exist.
+	for _, ddl := range []string{
+		"CREATE TABLE IF NOT EXISTS user_groups (id text PRIMARY KEY, name text)",
+		"CREATE TABLE IF NOT EXISTS user_group_links (id text PRIMARY KEY, user_group_id text, kind text, value text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_members (id text PRIMARY KEY, user_group_id text, user_id text, source text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_role_assignments " +
+			"(id text PRIMARY KEY, user_group_id text, role_id text, environment_id text, environment_group_id text, created_at datetime, updated_at datetime)",
+	} {
+		require.NoError(t, db.Exec(ddl).Error)
+	}
 	require.NoError(
 		t,
 		db.Exec("CREATE TABLE IF NOT EXISTS api_keys (id text PRIMARY KEY, created_at datetime, updated_at datetime, "+
@@ -259,9 +270,10 @@ func TestUserProfileValidationAndPersistence(t *testing.T) {
 	require.Equal(t, 16, *dto.FontSize)
 
 	reloaded.Preferences = types.UserPreferences{
-		InterfaceFont: new("'Inter', 微软雅黑"),
-		MonospaceFont: new("JetBrains Mono"),
-		CodeFont:      new(`"Fira Code"`),
+		InterfaceFont:              new("'Inter', 微软雅黑"),
+		MonospaceFont:              new("JetBrains Mono"),
+		CodeFont:                   new(`"Fira Code"`),
+		EnvironmentFirstNavigation: new(true),
 	}
 	_, err = userSvc.UpdateUser(ctx, reloaded, nil)
 	require.NoError(t, err)
@@ -271,12 +283,14 @@ func TestUserProfileValidationAndPersistence(t *testing.T) {
 	require.Equal(t, "'Inter', 微软雅黑", kit.FromPtr(reloaded.Preferences.InterfaceFont))
 	require.Equal(t, "JetBrains Mono", kit.FromPtr(reloaded.Preferences.MonospaceFont))
 	require.Equal(t, `"Fira Code"`, kit.FromPtr(reloaded.Preferences.CodeFont))
+	require.True(t, kit.FromPtr(reloaded.Preferences.EnvironmentFirstNavigation))
 
 	dto, err = userSvc.ToUserResponseDto(ctx, *reloaded)
 	require.NoError(t, err)
 	require.Equal(t, "'Inter', 微软雅黑", kit.FromPtr(dto.Preferences.InterfaceFont))
 	require.Equal(t, "JetBrains Mono", kit.FromPtr(dto.Preferences.MonospaceFont))
 	require.Equal(t, `"Fira Code"`, kit.FromPtr(dto.Preferences.CodeFont))
+	require.True(t, kit.FromPtr(dto.Preferences.EnvironmentFirstNavigation))
 
 	conflictingUser := createTestUser(t, userSvc, "user-2", "another-user")
 	conflictingUser.Username = u.Username
@@ -986,4 +1000,76 @@ func TestLdapManagedUserGuards(t *testing.T) {
 	setLdapEnabled(true)
 	require.NoError(t, db.Model(&userdomain.User{}).Where("id = ?", ldapUser.ID).Update("disabled", true).Error)
 	require.NoError(t, userSvc.DeleteUser(ctx, ldapUser.ID, nil))
+}
+
+func TestUserDtoExposesEnvironmentGroupScope(t *testing.T) {
+	ctx := t.Context()
+	db := setupAuthServiceTestDB(t)
+	roleSvc := role.NewRoleService(db)
+	require.NoError(t, roleSvc.EnsureBuiltInRoles(ctx))
+	userSvc := userdomain.NewUserService(userdomain.UserServiceParams{
+		DB:                   db,
+		RoleService:          roleSvc,
+		RevokeSessionsExcept: session.RevokeAllUserSessionsExceptInDB,
+	})
+	grantGlobalAdmin(t, roleSvc, createTestUser(t, userSvc, "root", "root").ID)
+	member := createTestUser(t, userSvc, "member", "member")
+	require.NoError(t, db.Exec("INSERT INTO environment_groups (id, name) VALUES ('prod', 'Prod')").Error)
+	require.NoError(t, db.Exec("INSERT INTO environments (id, name, api_url, group_id) VALUES ('web', 'Web', 'agent://web', 'prod')").Error)
+	require.NoError(t, roleSvc.ReplaceUserAssignments(ctx, member.ID, role.RoleAssignmentSourceManual, []role.UserRoleAssignment{
+		{RoleID: authz.BuiltInRoleViewer, EnvironmentGroupID: new("prod")},
+	}))
+
+	listed, _, err := userSvc.ListUsersPaginated(ctx, pagination.QueryParams{SearchQuery: pagination.SearchQuery{Search: "member"}})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	dto, err := userSvc.ToUserResponseDto(ctx, *member)
+	require.NoError(t, err)
+	for _, got := range []types.User{listed[0], dto} {
+		// The users page re-saves these summaries, so a missing group would turn the grant global.
+		require.Equal(t, []types.RoleAssignmentSummary{{
+			RoleID:             authz.BuiltInRoleViewer,
+			EnvironmentGroupID: new("prod"),
+			Source:             role.RoleAssignmentSourceManual,
+		}}, got.RoleAssignments)
+		require.Contains(t, got.PermissionsByEnv, "web")
+		require.NotContains(t, got.PermissionsByEnv, "global")
+	}
+}
+
+func TestUserDtoExposesUserGroupsAndGroupAdminStaysDeletable(t *testing.T) {
+	ctx := t.Context()
+	db := setupAuthServiceTestDB(t)
+	roleSvc := role.NewRoleService(db)
+	require.NoError(t, roleSvc.EnsureBuiltInRoles(ctx))
+	userSvc := userdomain.NewUserService(userdomain.UserServiceParams{
+		DB:                   db,
+		RoleService:          roleSvc,
+		RevokeSessionsExcept: session.RevokeAllUserSessionsExceptInDB,
+	})
+	root := createTestUser(t, userSvc, "root", "root")
+	grantGlobalAdmin(t, roleSvc, root.ID)
+	member := createTestUser(t, userSvc, "member", "member")
+	loner := createTestUser(t, userSvc, "loner", "loner")
+	require.NoError(t, db.Exec(`INSERT INTO user_groups (id, name) VALUES ('ops', 'Ops'), ('audit', 'audit')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO user_group_members (id, user_group_id, user_id, source) VALUES
+		('m1', 'ops', 'member', 'manual'), ('m2', 'ops', 'member', 'oidc'), ('m3', 'audit', 'member', 'ldap')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO user_group_role_assignments (id, user_group_id, role_id) VALUES ('g1', 'ops', ?)`, authz.BuiltInRoleAdmin).Error)
+
+	listed, _, err := userSvc.ListUsersPaginated(ctx, pagination.QueryParams{Start: 0, Limit: 20, Sort: "Username", Order: "asc", Filters: map[string]string{}})
+	require.NoError(t, err)
+	byID := make(map[string]types.User, len(listed))
+	for _, u := range listed {
+		byID[u.ID] = u
+	}
+	dto, err := userSvc.ToUserResponseDto(ctx, *member)
+	require.NoError(t, err)
+	for _, got := range []types.User{byID[member.ID], dto} {
+		require.Equal(t, []types.UserGroupRef{{ID: "audit", Name: "audit"}, {ID: "ops", Name: "Ops"}}, got.UserGroups, "groups from every source, once each, sorted by name")
+		require.True(t, got.IsGlobalAdmin, "admin through a group is effective")
+		require.True(t, got.CanDelete, "a group admin never counts as the last direct admin")
+	}
+	require.False(t, byID[root.ID].CanDelete, "the sole direct admin stays protected")
+	require.Empty(t, byID[loner.ID].UserGroups)
+	require.NoError(t, userSvc.DeleteUser(ctx, member.ID, nil))
 }

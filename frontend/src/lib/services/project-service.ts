@@ -11,8 +11,7 @@ import type {
 	ProjectTransferPreflight,
 	ProjectTransferRequest,
 	ProjectTransferResource,
-	ProjectTransferStarted,
-	ProjectUpdateInfo
+	ProjectTransferStarted
 } from '#lib/types/project.js';
 import type { OperationStreamFrame } from '#lib/types/stream.js';
 import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
@@ -112,27 +111,15 @@ class ProjectService extends BaseAPIService {
 		return this.handleResponse(this.api.post(`/agents/${environmentId}/projects`, form));
 	}
 
-	async checkUpdates(projectId: string, environmentId: string): Promise<ProjectUpdateInfo> {
-		return this.handleResponse(
-			this.api.post(`/agents/${environmentId}/updater/projects/${encodeURIComponent(projectId)}/check`, {})
-		);
-	}
-
 	async getProjectForEnvironment(environmentId: string, projectId: string): Promise<Project> {
 		const basePath = `/agents/${environmentId}/projects/${projectId}`;
-		const [summary, compose, runtime, updates] = await Promise.all([
+		const [summary, compose, runtime] = await Promise.all([
 			this.getProjectSection(basePath),
 			this.getProjectSection(`${basePath}/compose`),
-			this.getProjectSection(`${basePath}/runtime`),
-			this.getProjectSection(`${basePath}/updates`)
+			this.getProjectSection(`${basePath}/runtime`)
 		]);
 
-		return {
-			...summary,
-			...compose,
-			...runtime,
-			updateInfo: updates.updateInfo ?? compose.updateInfo ?? summary.updateInfo
-		};
+		return { ...summary, ...compose, ...runtime };
 	}
 
 	private async getProjectSection(path: string): Promise<Project> {

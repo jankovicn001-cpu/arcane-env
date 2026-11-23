@@ -43,6 +43,25 @@ func TestAccessSurfaceRegistryDefinesSettingsCustomizeAndLandingSemantics(t *tes
 	require.ElementsMatch(t, []string{authz.PermVariablesList, authz.PermVariablesRead}, variables.Permissions)
 	require.NotContains(t, variables.Permissions, authz.PermTemplatesRead)
 
+	for id, want := range map[string]struct{ url, label string }{
+		"route.environments.browse":     {url: "/environments", label: "Environments"},
+		"route.environments.group":      {url: "/environments/{groupId}", label: "Environment"},
+		"route.environments.containers": {url: "/environments/{groupId}/{environmentId}", label: "Agent"},
+	} {
+		surface := requireAccessSurface(t, id)
+		require.Equal(t, want.url, surface.URL, id)
+		require.Equal(t, want.label, surface.Label, id)
+		require.Equal(t, authz.AccessMatchModeAnyOf, surface.MatchMode, id)
+		require.Equal(t, authz.AccessScopeModeEnvPlusGlobal, surface.ScopeMode, id)
+		require.ElementsMatch(t, []string{
+			authz.PermContainersList,
+			authz.PermProjectsList,
+			authz.PermImagesList,
+			authz.PermVolumesList,
+			authz.PermNetworksList,
+		}, surface.Permissions, id)
+	}
+
 	activities := requireAccessSurface(t, "route.activities")
 	require.Equal(t, authz.AccessSurfaceKindRoute, activities.Kind)
 	require.Empty(t, activities.URL)

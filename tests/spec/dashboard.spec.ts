@@ -52,31 +52,26 @@ const mockedCounts: Record<string, Record<string, number>> = {
 	containers: {
 		runningContainers: 4,
 		stoppedContainers: 3,
-		totalContainers: 7,
-		updatesAvailable: 0
+		totalContainers: 7
 	},
-	images: { imagesInuse: 5, imagesUnused: 4, totalImages: 9, totalImageSize: 0 },
-	projects: { updatesAvailable: 0 }
+	images: { imagesInuse: 5, imagesUnused: 4, totalImages: 9, totalImageSize: 0 }
 };
 
 async function mockDashboardCounts(page: Page) {
 	const requested: string[] = [];
-	await page.route(
-		/\/api\/agents\/[^/]+\/(containers|images|projects)\/counts(?:\?.*)?$/,
-		async (route) => {
-			const [, , , scope, domain] = new URL(route.request().url()).pathname.split('/');
-			const environmentIds = decodeURIComponent(scope).split(',');
-			const data = mockedCounts[domain];
-			requested.push(`${domain}:${environmentIds.join(',')}`);
-			await route.fulfill({
-				json: {
-					success: true,
-					data,
-					environments: environmentIds.map((id) => ({ environment: { id, name: id }, data }))
-				}
-			});
-		}
-	);
+	await page.route(/\/api\/agents\/[^/]+\/(containers|images)\/counts(?:\?.*)?$/, async (route) => {
+		const [, , , scope, domain] = new URL(route.request().url()).pathname.split('/');
+		const environmentIds = decodeURIComponent(scope).split(',');
+		const data = mockedCounts[domain];
+		requested.push(`${domain}:${environmentIds.join(',')}`);
+		await route.fulfill({
+			json: {
+				success: true,
+				data,
+				environments: environmentIds.map((id) => ({ environment: { id, name: id }, data }))
+			}
+		});
+	});
 	return requested;
 }
 
@@ -190,7 +185,7 @@ test.describe('Dashboard counts', () => {
 		await expect(main.getByText('9', { exact: true }).first()).toBeVisible();
 		await expect
 			.poll(() => requested)
-			.toEqual(expect.arrayContaining(['containers:0', 'images:0', 'projects:0']));
+			.toEqual(expect.arrayContaining(['containers:0', 'images:0']));
 		expect(snapshotRequests).toEqual([]);
 	});
 });

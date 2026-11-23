@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { z } from 'zod/v4';
 
@@ -7,24 +8,30 @@
 	import { ArcaneButton } from '#lib/components/arcane-button/index.js';
 	import FormInput from '#lib/components/form/form-input.svelte';
 	import LabeledSwitch from '#lib/components/form/labeled-switch.svelte';
+	import SelectWithLabel from '#lib/components/form/select-with-label.svelte';
 	import { CopyButton } from '#lib/components/ui/copy-button/index.js';
 	import * as ResponsiveDialog from '#lib/components/ui/responsive-dialog/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { AgentConnectionIcon } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
+	import { environmentGroupListQuery } from '#lib/query/environment-groups.js';
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { environmentManagementService } from '#lib/services/env-mgmt-service.js';
 	import { environmentStore } from '#lib/stores/environment.store.svelte.js';
+	import { GLOBAL_SCOPE } from '#lib/types/role.js';
 	import type { EnvironmentCreate } from '#lib/types/ui/environment.js';
 	import { extractApiErrorMessage } from '#lib/utils/api.js';
+	import { hasPermission, isGlobalAdmin } from '#lib/utils/auth.js';
 	import { createForm, preventDefault } from '#lib/utils/settings.svelte.js';
 
 	type NewEnvironmentSheetProps = {
 		open: boolean;
 		onEnvironmentCreated?: () => void;
+		/** Environment group the new agent starts in. */
+		groupId?: string;
 	};
 
-	let { open = $bindable(false), onEnvironmentCreated }: NewEnvironmentSheetProps = $props();
+	let { open = $bindable(false), onEnvironmentCreated, groupId = '' }: NewEnvironmentSheetProps = $props();
 	const queryClient = useQueryClient();
 
 	let createdEnvironment = $state<{ id: string; useMTLS: boolean } | null>(null);
@@ -54,19 +61,33 @@
 	let agentMTLSEnabled = $state(false);
 
 	const agentFormSchema = z.object({
-		name: z.string().min(1, m.environments_name_required()).max(25, m.environments_name_too_long())
+		name: z.string().min(1, m.environments_name_required()).max(25, m.environments_name_too_long()),
+		groupId: z.string()
 	});
 
 	const agentForm = createForm<typeof agentFormSchema>(agentFormSchema, {
-		name: ''
+		name: '',
+		groupId: untrack(() => groupId)
 	});
 	let agentInputs = $derived(agentForm.inputs);
+
+	const environmentGroupsQuery = createQuery(() => ({
+		...environmentGroupListQuery(),
+		enabled: hasPermission('environments:list', GLOBAL_SCOPE)
+	}));
+	const environmentGroupOptions = $derived([
+		{ value: '', label: m.none() },
+		...(environmentGroupsQuery.data ?? []).map((group) => ({ value: group.id, label: group.name }))
+	]);
 
 	function handleAgentSubmit() {
 		const data = agentForm.validate();
 		if (!data) return;
 
-		createEnvironmentMutation.mutate({ dto: { name: data.name }, useMTLS: agentMTLSEnabled });
+		createEnvironmentMutation.mutate({
+			dto: { name: data.name, groupId: data.groupId || undefined },
+			useMTLS: agentMTLSEnabled
+		});
 	}
 
 	function handleDone() {
@@ -141,6 +162,18 @@
 			</p>
 			<form onsubmit={preventDefault(handleAgentSubmit)} class="space-y-4">
 				<FormInput label={m.common_name()} placeholder={m.env_remote_docker_host()} bind:input={agentInputs.name} />
+				<!-- Placing an agent in an environment extends that environment's access grants, so it is admin-only. -->
+				{#if isGlobalAdmin()}
+					<SelectWithLabel
+						id="new-agent-environment"
+						label={m.environment()}
+						description={m.agent_environment_description()}
+						placeholder={m.none()}
+						options={environmentGroupOptions}
+						error={agentInputs.groupId.error}
+						bind:value={agentInputs.groupId.value}
+					/>
+				{/if}
 
 				<LabeledSwitch
 					id="new-agent-mtls"

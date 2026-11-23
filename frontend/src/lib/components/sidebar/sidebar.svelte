@@ -3,6 +3,7 @@
 		navigationItems,
 		getSwarmNavigationItems,
 		getPodmanNavigationItems,
+		getResourceNavigationItems,
 		filterByPermissions
 	} from '#lib/config/navigation-config.js';
 </script>
@@ -25,7 +26,6 @@
 	import SidebarItemGroup from './sidebar-itemgroup.svelte';
 	import SidebarLogo from './sidebar-logo.svelte';
 	import SidebarPinButton from './sidebar-pin-button.svelte';
-	import SidebarUpdatebanner from './sidebar-updatebanner.svelte';
 	import SidebarUser from './sidebar-user.svelte';
 
 	let {
@@ -58,7 +58,7 @@
 	const isCollapsed = $derived(sidebar.state === 'collapsed');
 	const overviewItems = $derived(filterByPermissions(navigationItems.overviewItems, effectiveUser ?? null, permissionsManifest));
 	const deployItems = $derived(filterByPermissions(navigationItems.deployItems, effectiveUser ?? null, permissionsManifest));
-	const resourceItems = $derived(filterByPermissions(navigationItems.resourceItems, effectiveUser ?? null, permissionsManifest));
+	const resourceItems = $derived(filterByPermissions(getResourceNavigationItems(), effectiveUser ?? null, permissionsManifest));
 	const swarmItems = $derived(
 		filterByPermissions(getSwarmNavigationItems(swarmEnabled), effectiveUser ?? null, permissionsManifest)
 	);
@@ -100,7 +100,6 @@
 		{/if}
 	</Sidebar.Content>
 	<Sidebar.Footer collapsed={isCollapsed}>
-		<SidebarUpdatebanner {isCollapsed} {versionInformation} debug={false} />
 		{#if isCollapsed}
 			<div class="flex flex-col items-center gap-1">
 				<ActivityCenterTrigger collapsed compact />

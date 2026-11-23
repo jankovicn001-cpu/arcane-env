@@ -17,10 +17,12 @@
 	import { userService } from '#lib/services/user-service.js';
 	import settingsStore from '#lib/stores/config-store.svelte.js';
 	import userStore from '#lib/stores/user-store.svelte.js';
+	import type { UserRoleAssignmentInput } from '#lib/types/role.js';
 	import type { Settings } from '#lib/types/settings.js';
 	import type { UserCreate, UserUpdate } from '#lib/types/ui/user.js';
 	import type { User } from '#lib/types/user.js';
 	import { handleApiResultWithCallbacks } from '#lib/utils/api.js';
+	import { roleScopeLabel } from '#lib/utils/options.js';
 	import { ResourceListPageState } from '#lib/utils/resource-list-page.svelte.js';
 	import { tryCatch } from '#lib/utils/try-catch.js';
 
@@ -50,18 +52,25 @@
 	const editingAssignments = $derived(
 		userToEdit?.roleAssignments
 			?.filter((a) => a.source === 'manual')
-			.map((a) => ({ roleId: a.roleId, environmentId: a.environmentId }))
+			.map((a) => ({ roleId: a.roleId, environmentId: a.environmentId, environmentGroupId: a.environmentGroupId }))
 			.sort(compareAssignments) ?? []
 	);
 
 	const nameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-	// Global assignments sort first because their environment name is empty.
-	function compareAssignments(a: { roleId: string; environmentId?: string }, b: { roleId: string; environmentId?: string }) {
-		const envName = (id?: string) => (id ? (data.environments.find((e) => e.id === id)?.name ?? id) : '');
+	// Global assignments sort first, then environments, then agents.
+	function compareAssignments(a: UserRoleAssignmentInput, b: UserRoleAssignmentInput) {
+		const scopeRank = (assignment: UserRoleAssignmentInput) => {
+			if (assignment.environmentGroupId) return 1;
+			if (assignment.environmentId) return 2;
+			return 0;
+		};
+		const scopeName = (assignment: UserRoleAssignmentInput) =>
+			roleScopeLabel(assignment, data.environments, data.environmentGroups);
 		const roleName = (id: string) => data.roles.find((r) => r.id === id)?.name ?? id;
 		return (
-			nameCollator.compare(envName(a.environmentId), envName(b.environmentId)) ||
+			scopeRank(a) - scopeRank(b) ||
+			nameCollator.compare(scopeName(a), scopeName(b)) ||
 			nameCollator.compare(roleName(a.roleId), roleName(b.roleId))
 		);
 	}
@@ -94,7 +103,7 @@
 		userId
 	}: {
 		user: UserUpdate & {
-			roleAssignments?: { roleId: string; environmentId?: string }[];
+			roleAssignments?: UserRoleAssignmentInput[];
 		};
 		isEditMode: boolean;
 		userId?: string;
@@ -273,6 +282,8 @@
 			bind:selectedIds={pageState.selectedIds}
 			bind:requestOptions={pageState.requestOptions}
 			roles={data.roles}
+			environments={data.environments}
+			groups={data.environmentGroups}
 			onRetry={() => usersQuery.refetch()}
 			onEditUser={openEditDialog}
 		/>
@@ -284,6 +295,7 @@
 			userToEdit={null}
 			roles={data.roles}
 			environments={data.environments}
+			groups={data.environmentGroups}
 			availableRoleAssignments={[]}
 			onSubmit={handleUserSubmit}
 			isLoading={isLoading.creating}
@@ -295,6 +307,7 @@
 				{userToEdit}
 				roles={data.roles}
 				environments={data.environments}
+				groups={data.environmentGroups}
 				availableRoleAssignments={editingAssignments}
 				onSubmit={handleUserSubmit}
 				isLoading={isLoading.editing}

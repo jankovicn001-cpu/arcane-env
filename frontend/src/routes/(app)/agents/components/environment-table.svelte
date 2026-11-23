@@ -10,7 +10,6 @@
 	import { UniversalMobileCard } from '#lib/components/arcane-table/index.js';
 	import RowActionsMenu from '#lib/components/arcane-table/row-actions-menu.svelte';
 	import { openConfirmDialog } from '#lib/components/confirm-dialog/index.js';
-	import UpdateCenterDialog from '#lib/components/dialogs/update-center-dialog.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { useEasyJoinCandidates } from '#lib/hooks/use-easy-join-candidates.svelte.js';
@@ -30,17 +29,13 @@
 	import { environmentStore } from '#lib/stores/environment.store.svelte.js';
 	import type { Paginated } from '#lib/types/base.js';
 	import type { Environment } from '#lib/types/environment.js';
-	import { GLOBAL_SCOPE } from '#lib/types/role.js';
 	import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
-	import type { VersionInfo } from '#lib/types/version.js';
 	import { handleApiResultWithCallbacks } from '#lib/utils/api.js';
-	import { hasPermission } from '#lib/utils/auth.js';
 	import { getEnvironmentStatusVariant, isEnvironmentOnline, resolveEnvironmentStatus } from '#lib/utils/docker.js';
 	import { capitalizeFirstLetter } from '#lib/utils/formatting.js';
 	import { tryCatch } from '#lib/utils/try-catch.js';
 
 	import EasyJoinDialog from '../../swarm/cluster/components/easy-join-dialog.svelte';
-	import EnvironmentUpgradeMenuItem from './environment-upgrade-menu-item.svelte';
 	import EnvironmentVersionCell from './environment-version-cell.svelte';
 
 	let {
@@ -60,16 +55,11 @@
 	} = $props();
 
 	const queryClient = useQueryClient();
-	const isLoading = $state({ removing: false, testing: false, upgrading: false, toggling: false });
-	let showUpgradeDialog = $state(false);
-	let selectedEnvironmentForUpgrade = $state<Environment | null>(null);
-	let selectedVersionInfoForUpgrade = $state<VersionInfo | null>(null);
+	const isLoading = $state({ removing: false, testing: false, toggling: false });
 	let easyJoinDialogOpen = $state(false);
 	let easyJoinSession = $state(0);
 	let easyJoinTarget = $state<Environment | null>(null);
 	const easyJoinCandidates = useEasyJoinCandidates();
-
-	const canInstallUpdates = $derived(hasPermission('environments:update', GLOBAL_SCOPE));
 
 	const environmentTypeFilters: FilterOption[] = [
 		{ value: 'agent', label: m.environments_agent_label(), icon: EnvironmentsIcon },
@@ -149,12 +139,6 @@
 		isLoading.testing = false;
 	}
 
-	function handleUpgradeSelected(environment: Environment, versionInfo: VersionInfo) {
-		selectedEnvironmentForUpgrade = environment;
-		selectedVersionInfoForUpgrade = versionInfo;
-		showUpgradeDialog = true;
-	}
-
 	async function handleToggleEnabled(environment: Environment) {
 		const newEnabled = !environment.enabled;
 		isLoading.toggling = true;
@@ -191,6 +175,13 @@
 			cell: EnvironmentCell
 		},
 		{
+			id: 'group',
+			title: m.environment(),
+			sortable: true,
+			accessorFn: (row) => row.group?.name ?? '',
+			cell: GroupCell
+		},
+		{
 			accessorKey: 'status',
 			title: m.common_status(),
 			sortable: true,
@@ -219,6 +210,7 @@
 
 	const mobileFields = [
 		{ id: 'id', label: m.common_id(), defaultVisible: false },
+		{ id: 'group', label: m.environment(), defaultVisible: true },
 		{ id: 'status', label: m.common_status(), defaultVisible: true },
 		{ id: 'type', label: m.common_type(), defaultVisible: true },
 		{ id: 'enabled', label: m.common_enabled(), defaultVisible: true },
@@ -272,6 +264,10 @@
 	</div>
 {/snippet}
 
+{#snippet GroupCell({ value }: { value: unknown })}
+	<span class={['text-sm', !value && 'text-muted-foreground']}>{value || '—'}</span>
+{/snippet}
+
 {#snippet StatusCell({ value }: { value: unknown })}
 	{@const statusValue = String(value)}
 	{@const variant = getEnvironmentStatusVariant(statusValue as Environment['status'])}
@@ -305,6 +301,13 @@
 		subtitle={(item: Environment) => ((mobileFieldVisibility['id'] ?? true) ? item.id : null)}
 		badges={[{ variant: 'green', text: m.resource_environment_cap() }]}
 		fields={[
+			{
+				label: m.environment(),
+				getValue: (item: Environment) => item.group?.name,
+				icon: StatsIcon,
+				iconVariant: 'gray' as const,
+				show: (mobileFieldVisibility['group'] ?? true) && !!item.group
+			},
 			{
 				label: m.common_status(),
 				getValue: (item: Environment) => capitalizeFirstLetter(resolveEnvironmentStatus(item)),
@@ -354,14 +357,6 @@
 		{#if item.id !== '0'}
 			<DropdownMenu.Separator />
 
-			<EnvironmentUpgradeMenuItem
-				environment={item}
-				isOnline={isEnvironmentOnline(item)}
-				disabled={isLoading.upgrading}
-				isUpgradingThis={isLoading.upgrading && selectedEnvironmentForUpgrade?.id === item.id}
-				onSelect={handleUpgradeSelected}
-			/>
-
 			<DropdownMenu.Item onclick={() => handleToggleEnabled(item)} disabled={isLoading.toggling}>
 				{#if item.enabled}
 					<EyeOffIcon class="size-4" />
@@ -394,18 +389,6 @@
 	{mobileFields}
 	rowActions={RowActions}
 	mobileCard={EnvironmentMobileCardSnippet}
-/>
-
-<UpdateCenterDialog
-	bind:open={showUpgradeDialog}
-	onFinished={async () => {
-		await queryClient.invalidateQueries({ queryKey: queryKeys.environments.all });
-	}}
-	versionInformation={selectedVersionInfoForUpgrade ?? undefined}
-	canInstall={canInstallUpdates}
-	environmentName={selectedEnvironmentForUpgrade?.name}
-	environmentId={selectedEnvironmentForUpgrade?.id}
-	bind:upgrading={isLoading.upgrading}
 />
 
 {#key `${easyJoinSession}:${easyJoinTarget ? easyJoinCandidates.managerFor(easyJoinTarget.id) : ''}`}

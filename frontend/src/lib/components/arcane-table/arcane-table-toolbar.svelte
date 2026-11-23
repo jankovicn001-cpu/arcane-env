@@ -18,7 +18,6 @@
 	import DataTableViewOptions from './arcane-table-view-options.svelte';
 	import type { BulkAction, TableViewMode } from './arcane-table.types.svelte';
 	import {
-		imageUpdateFilters,
 		hardenedImageFilters,
 		usageFilters,
 		severityFilters,
@@ -94,9 +93,6 @@
 	);
 	const environmentFilterOptions = $derived(environmentStore.shown.map((env) => ({ label: env.name, value: env.id })));
 	const usageColumn = $derived(table.getAllColumns().some((col) => col.id === 'inUse') ? table.getColumn('inUse') : undefined);
-	const updatesColumn = $derived(
-		table.getAllColumns().some((col) => col.id === 'updates') ? table.getColumn('updates') : undefined
-	);
 	const hardenedColumn = $derived(
 		table.getAllColumns().some((col) => col.id === 'hardened') ? table.getColumn('hardened') : undefined
 	);
@@ -132,7 +128,6 @@
 				tagsColumn && tagsColumnFilterOptions.length > 0,
 				labelColumn,
 				usageColumn,
-				updatesColumn,
 				hardenedColumn,
 				severityColumn,
 				vulnSeverityColumn,
@@ -158,9 +153,6 @@
 	{/if}
 	{#if usageColumn}
 		<DataTableFacetedFilter column={usageColumn} title={m.common_usage()} options={usageFilters} />
-	{/if}
-	{#if updatesColumn}
-		<DataTableFacetedFilter column={updatesColumn} title={m.updates()} options={imageUpdateFilters} />
 	{/if}
 	{#if hardenedColumn}
 		<DataTableFacetedFilter column={hardenedColumn} title={m.docker_hardened_image()} options={hardenedImageFilters} />

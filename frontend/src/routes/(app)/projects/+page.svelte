@@ -2,58 +2,28 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { createQuery } from '@tanstack/svelte-query';
 	import { untrack } from 'svelte';
-	import { toast } from 'svelte-sonner';
 
-	import { openConfirmDialog } from '#lib/components/confirm-dialog/index.js';
 	import { EmptyState } from '#lib/components/states/index.js';
-	import { TABLE_PAGE_SIZE_ALL } from '#lib/constants/table-pagination.js';
 	import { ContainersIcon, ProjectsIcon, PlayIcon, StopIcon } from '#lib/icons/index.js';
 	import { ResourcePageLayout, type ActionButton, type StatCardConfig } from '#lib/layouts/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import { projectListQuery, projectStatusCountsQuery } from '#lib/query/projects.js';
 	import { projectTagsQuery } from '#lib/query/projects.js';
-	import { queryKeys } from '#lib/query/query-keys.js';
-	import { imageService } from '#lib/services/image-service.js';
-	import { projectService } from '#lib/services/project-service.js';
 	import { environmentStore } from '#lib/stores/environment.store.svelte.js';
 	import type { ProjectStatusCounts } from '#lib/types/project.js';
-	import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
-	import { activityToastOptions, extractActivityId } from '#lib/utils/activity-toast.js';
 	import { pinViewAction } from '#lib/utils/dashboard-layout.js';
-	import {
-		acrossEnvironmentsNote,
-		actionEnvironments,
-		hasShownPermission,
-		listScopes,
-		readableEnvironments,
-		settleAcrossEnvironments,
-		withFailedEnvironments
-	} from '#lib/utils/environments.js';
+	import { hasShownPermission, readableEnvironments, withFailedEnvironments } from '#lib/utils/environments.js';
 
 	import ProjectsTable from './components/projects-table.svelte';
+	import { withArchivedFilter } from './projects-table.helpers';
 
 	let { data } = $props();
-
-	function withArchivedFilter(options: SearchPaginationSortRequest, show: boolean): SearchPaginationSortRequest {
-		const filters = { ...options.filters };
-		if (show) {
-			filters['archived'] = 'true';
-		} else {
-			delete filters['archived'];
-		}
-
-		return {
-			...options,
-			filters: Object.keys(filters).length > 0 ? filters : undefined
-		};
-	}
 
 	let baseProjectRequestOptions = $state(untrack(() => withArchivedFilter(data.projectRequestOptions, data.showArchived)));
 	let selectedIds = $state<string[]>([]);
 	let isManualRefreshing = $state(false);
-	const queryClient = useQueryClient();
 	const scope = $derived(environmentStore.shownKey);
 	const showArchived = $derived(page.url.searchParams.get('archived') === 'true');
 	const projectRequestOptions = $derived(withArchivedFilter(baseProjectRequestOptions, showArchived));
@@ -61,8 +31,7 @@
 		runningProjects: 0,
 		stoppedProjects: 0,
 		totalProjects: 0,
-		archivedProjects: 0,
-		updatesAvailable: 0
+		archivedProjects: 0
 	};
 
 	// The load already cached the first page under its key; seeding every key with it would hide other pages and filters.
@@ -101,74 +70,9 @@
 	const relatedFailures = $derived(
 		[statusCountsQuery.data, tagsQuery.data].flatMap((result) => (result?.envId === scope ? result.value.failedEnvironments : []))
 	);
-	const resourcesReady = $derived(projects !== null);
 	// Tags change rarely, so a refresh reloads them only after an environment failed to return them.
 	const refetchFailedTags = () =>
 		tagsQuery.isError || tagsQuery.data?.value.failedEnvironments.length ? tagsQuery.refetch() : undefined;
-
-	async function updateEnvironmentProjects(requestedEnvId: string) {
-		// Refresh image updates, then redeploy only projects the list reports as outdated.
-		const imageCheckResults = await imageService.checkAllImages(requestedEnvId);
-
-		// The updates filter is evaluated over every candidate in one pass, so a single unbounded request is cheapest.
-		const projectsWithUpdates = await projectService.getProjectsForEnvironment(requestedEnvId, {
-			filters: { updates: 'has_update' },
-			pagination: { page: 1, limit: TABLE_PAGE_SIZE_ALL }
-		});
-		// Untracked compose rows cannot be deployed by ID.
-		const projectsToUpdate = projectsWithUpdates.data.filter((p) => !p.isDiscovered);
-
-		if (projectsToUpdate.length === 0) {
-			return { updated: 0, activityId: extractActivityId(imageCheckResults) };
-		}
-
-		const results = await Promise.allSettled(
-			projectsToUpdate.map(async (proj) => {
-				// pullPolicy always already pulls fresh images.
-				await projectService.deployProject(proj.id, 'up', { pullPolicy: 'always' }, requestedEnvId);
-				return proj.name;
-			})
-		);
-		const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
-		if (failed.length > 0) {
-			const succeeded = results.length - failed.length;
-			throw new Error(`${failed.length} project(s) failed to update (${succeeded} succeeded)`);
-		}
-
-		return { updated: results.length, activityId: extractActivityId(imageCheckResults) };
-	}
-
-	const checkUpdatesMutation = createMutation(() => ({
-		mutationKey: queryKeys.projects.checkUpdates(scope),
-		mutationFn: async (_requestedScope: string) => {
-			const results = await settleAcrossEnvironments(
-				actionEnvironments('image-updates:check', 'projects:deploy'),
-				updateEnvironmentProjects
-			);
-			return {
-				updated: results.reduce((total, result) => total + result.value.updated, 0),
-				activityId: results[0]?.value.activityId,
-				environmentIds: results.map(({ environment }) => environment.id)
-			};
-		},
-		onSuccess: async (result, requestedScope) => {
-			const toastOptions = activityToastOptions(result.activityId);
-			if (result && result.updated === 0) {
-				toast.success(m.image_update_up_to_date_title(), toastOptions);
-			} else {
-				toast.success(m.compose_update_success(), toastOptions);
-			}
-			await Promise.all(
-				[...new Set([requestedScope, ...listScopes(result.environmentIds)])].map((listScope) =>
-					queryClient.invalidateQueries({ queryKey: queryKeys.projects.listPrefix(listScope) })
-				)
-			);
-		},
-		onError: (error, requestedScope) => {
-			toast.error(error.message || m.containers_check_updates_failed());
-			void queryClient.invalidateQueries({ queryKey: queryKeys.projects.listPrefix(requestedScope) });
-		}
-	}));
 
 	const projectStatusCounts = $derived(statusCountsQuery.data?.envId === scope ? statusCountsQuery.data.value : countsFallback);
 	const totalCompose = $derived(projectStatusCounts.totalProjects);
@@ -176,19 +80,6 @@
 	const stoppedCompose = $derived(projectStatusCounts.stoppedProjects);
 	const archivedCompose = $derived(projectStatusCounts.archivedProjects);
 	const isRefreshBlocked = $derived(isManualRefreshing || projectsQuery.isFetching || statusCountsQuery.isFetching);
-
-	function handleCheckForUpdates() {
-		openConfirmDialog({
-			title: m.compose_update_projects(),
-			message:
-				`${m.compose_update_projects_confirm_message()} ${acrossEnvironmentsNote(actionEnvironments('image-updates:check', 'projects:deploy'))}`.trim(),
-			confirm: {
-				label: m.compose_update_projects(),
-				destructive: false,
-				action: () => checkUpdatesMutation.mutate(scope)
-			}
-		});
-	}
 
 	async function refreshCompose() {
 		if (isRefreshBlocked) return;
@@ -217,7 +108,6 @@
 	}
 
 	const canCreateProject = $derived(hasShownPermission('projects:create'));
-	const canDeployProject = $derived(hasShownPermission('projects:deploy'));
 
 	const actionButtons: ActionButton[] = $derived.by(() => {
 		const buttons: ActionButton[] = [];
@@ -228,16 +118,6 @@
 				placement: 'primary',
 				label: m.compose_create_project(),
 				onclick: () => goto(resolve('/(app)/projects/new'))
-			});
-		}
-		if (canDeployProject) {
-			buttons.push({
-				id: 'check-updates',
-				action: 'update',
-				label: m.compose_update_projects(),
-				onclick: handleCheckForUpdates,
-				loading: checkUpdatesMutation.isPending,
-				disabled: !resourcesReady || checkUpdatesMutation.isPending
 			});
 		}
 		buttons.push(pinViewAction('projects', projectRequestOptions, readableEnvironments('projects:list')));

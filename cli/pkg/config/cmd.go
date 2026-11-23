@@ -262,7 +262,7 @@ func newConfigTestCmd() *cobra.Command {
 			}
 
 			httpClient := &http.Client{Timeout: 10 * time.Second}
-			req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, cfg.ServerURL+"/api/version", http.NoBody)
+			req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, cfg.ServerURL+types.AppVersionEndpoint, http.NoBody)
 			if err != nil {
 				return fmt.Errorf("failed to create request: %w", err)
 			}

@@ -22,19 +22,12 @@ export function jobStatusLabel(status: string, isWorker = false): string {
 
 export function jobStepLabel(name: string): string {
 	const labels: Record<string, () => string> = {
-		prepare: m.jobs_step_prepare,
 		discover: m.jobs_step_discover,
-		check: m.jobs_step_check,
 		scan: m.jobs_step_scan,
 		patch: m.jobs_step_patch,
 		sync: m.jobs_step_sync,
 		backup: m.jobs_step_backup,
-		tags: m.jobs_step_tags,
-		finalize: m.jobs_step_finalize,
-		resume: m.jobs_step_resume,
-		candidates: m.jobs_step_candidates,
-		plan: m.jobs_step_plan,
-		apply: m.jobs_step_apply
+		finalize: m.jobs_step_finalize
 	};
 	return labels[name]?.() ?? name;
 }
@@ -46,8 +39,6 @@ export function jobNameLabel(job: Pick<JobStatus, 'id' | 'name'>): string {
 		'volume-backup': m.jobs_volume_backup_group,
 		'system-backup': m.jobs_system_backup_group,
 		'environment-health': m.jobs_health_check,
-		'auto-update': m.auto_update,
-		'image-polling': m.image_update_watcher,
 		'scheduled-prune': m.scheduled_prune,
 		'auto-heal': m.notifications_test_auto_heal_notification,
 		'vulnerability-scan': m.activity_type_vulnerability_scan,
@@ -56,7 +47,6 @@ export function jobNameLabel(job: Pick<JobStatus, 'id' | 'name'>): string {
 		'analytics-heartbeat': m.analytics_heartbeat,
 		'docker-client-refresh': m.docker_client_refresh,
 		'event-cleanup': m.event_cleanup,
-		'upgrade-log-cleanup': m.upgrade_log_cleanup,
 		'expired-sessions-cleanup': m.expired_sessions_cleanup,
 		'filesystem-watcher': m.filesystem_watcher,
 		'ldap-sync': m.ldap_sync

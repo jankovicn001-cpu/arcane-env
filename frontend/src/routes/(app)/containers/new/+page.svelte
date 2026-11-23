@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
 
@@ -24,7 +25,7 @@
 	const queryClient = useQueryClient();
 	const form = createForm<typeof containerFormSchema>(containerFormSchema, emptyContainerFormValues());
 	let rows = $state(emptyContainerFormRows());
-	let pickedEnvironmentId = $state('');
+	let pickedEnvironmentId = $state(page.url.searchParams.get('env') ?? '');
 	const environmentId = $derived(destinationEnvironmentId(pickedEnvironmentId, 'containers:create'));
 
 	const createContainerMutation = createMutation(() => ({

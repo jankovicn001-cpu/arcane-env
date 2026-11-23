@@ -4,7 +4,6 @@ import type { CreateRequest, UpdateRequest } from './pagination';
 export type BuiltinDashboardWidgetType =
 	| 'healthy'
 	| 'attentionCount'
-	| 'updates'
 	| 'risk'
 	| 'reclaimableTotal'
 	| 'environments'

@@ -5,7 +5,7 @@ import { ContainersIcon, ImagesIcon, NetworksIcon, ProjectsIcon, VolumesIcon, ty
 import { m } from '#lib/paraglide/messages.js';
 import type { DashboardResourceKind } from '#lib/types/user.js';
 
-export type ResourceFilterKey = 'status' | 'updates' | 'inUse' | 'label';
+export type ResourceFilterKey = 'status' | 'inUse' | 'label';
 
 export type ResourceOption = { value: string; label: () => string };
 
@@ -24,7 +24,7 @@ export const RESOURCE_KINDS: Record<DashboardResourceKind, ResourceKindDefinitio
 		icon: ContainersIcon,
 		permission: 'containers:list',
 		listHref: () => resolve('/(app)/containers'),
-		filters: ['status', 'updates', 'label'],
+		filters: ['status', 'label'],
 		statuses: [
 			{ value: 'running', label: m.common_running },
 			{ value: 'exited', label: m.containers_status_exited },
@@ -41,7 +41,7 @@ export const RESOURCE_KINDS: Record<DashboardResourceKind, ResourceKindDefinitio
 		icon: ProjectsIcon,
 		permission: 'projects:list',
 		listHref: () => resolve('/(app)/projects'),
-		filters: ['status', 'updates', 'label'],
+		filters: ['status', 'label'],
 		statuses: [
 			{ value: 'running', label: m.common_running },
 			{ value: 'partially running', label: m.projects_status_partial },
@@ -57,7 +57,7 @@ export const RESOURCE_KINDS: Record<DashboardResourceKind, ResourceKindDefinitio
 		icon: ImagesIcon,
 		permission: 'images:list',
 		listHref: () => resolve('/(app)/images'),
-		filters: ['inUse', 'updates', 'label'],
+		filters: ['inUse', 'label'],
 		statuses: []
 	},
 	volumes: {

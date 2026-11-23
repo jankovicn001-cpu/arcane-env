@@ -89,16 +89,6 @@ func newNotificationTestService(t *testing.T, db *database.DB, cfg *config.Confi
 	})
 }
 
-func newNotificationTestUpdateInfo() *types.ImageUpdateResponse {
-	return &types.ImageUpdateResponse{
-		HasUpdate:     true,
-		UpdateType:    "digest",
-		CurrentDigest: "sha256:current",
-		LatestDigest:  "sha256:latest",
-		CheckTime:     time.Date(2026, time.January, 9, 15, 4, 5, 0, time.UTC),
-	}
-}
-
 func TestNotificationService_ResolveNotificationTarget_UsesEnvironmentRecordAndFallback(t *testing.T) {
 	ctx := t.Context()
 	db, svc := setupNotificationTestService(t)
@@ -128,11 +118,8 @@ func TestNotificationService_DispatchNotification_InvalidAccessTokenReturnsUnaut
 	_, svc := setupNotificationTestService(t)
 
 	_, err := svc.DispatchNotification(ctx, "missing-token", types.NotificationDispatchRequest{
-		Kind: types.NotificationDispatchKindImageUpdate,
-		ImageUpdate: &types.NotificationDispatchImageUpdate{
-			ImageRef:   "nginx:latest",
-			UpdateInfo: *newNotificationTestUpdateInfo(),
-		},
+		Kind:     types.NotificationDispatchKindAutoHeal,
+		AutoHeal: &types.NotificationDispatchAutoHeal{ContainerName: "nginx", ContainerID: "abc123"},
 	})
 
 	require.Error(t, err)
@@ -163,95 +150,6 @@ func TestNotificationService_DispatchNotification_UnsupportedKindReturnsSentinel
 	unsupportedErr := ErrUnsupportedDispatchKind
 	require.ErrorIs(t, err, unsupportedErr)
 	require.Contains(t, err.Error(), "bogus_kind")
-}
-
-func TestNotificationService_SendImageUpdateNotification_AgentModeRequiresUpdateInfo(t *testing.T) {
-	ctx := t.Context()
-	db := setupNotificationTestDB(t)
-
-	svc := newNotificationTestService(t, db, &config.Config{
-		AppUrl:       "http://localhost:3552",
-		AgentEnabled: true,
-	})
-
-	_, err := svc.SendImageUpdateNotification(ctx, "nginx:latest", nil, notifications.NotificationEventImageUpdate)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "updateInfo is required")
-}
-
-func TestNotificationService_SendBatchImageUpdateNotification_AgentModeSkipsNoOpDispatch(t *testing.T) {
-	ctx := t.Context()
-	db := setupNotificationTestDB(t)
-
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	svc := newNotificationTestService(t, db, &config.Config{
-		AppUrl:        "http://localhost:3552",
-		AgentEnabled:  true,
-		AgentToken:    "agent-token",
-		ManagerApiUrl: server.URL,
-	})
-
-	t.Run("empty updates", func(t *testing.T) {
-		delivered, err := svc.SendBatchImageUpdateNotification(ctx, map[string]*types.ImageUpdateResponse{})
-		require.NoError(t, err)
-		require.Equal(t, 0, delivered)
-		require.EqualValues(t, 0, calls.Load())
-	})
-
-	t.Run("no changed updates", func(t *testing.T) {
-		delivered, err := svc.SendBatchImageUpdateNotification(ctx, map[string]*types.ImageUpdateResponse{
-			"nginx:latest": {
-				HasUpdate:     false,
-				CurrentDigest: "sha256:current",
-				LatestDigest:  "sha256:latest",
-			},
-			"redis:latest": nil,
-		})
-		require.NoError(t, err)
-		require.Equal(t, 0, delivered)
-		require.EqualValues(t, 0, calls.Load())
-	})
-}
-
-func TestBuildImageUpdateNotificationMessage_IncludesEnvironment(t *testing.T) {
-	updateInfo := newNotificationTestUpdateInfo()
-
-	message := notifications.BuildImageUpdateNotificationMessage(notifications.MessageFormatMarkdown, "Remote Alpha", "nginx:latest", updateInfo)
-	require.Contains(t, message, "**Environment:** Remote Alpha")
-	require.Equal(t, 1, strings.Count(message, "Environment"))
-
-	plainMessage := notifications.BuildImageUpdateNotificationMessage(notifications.MessageFormatPlain, "Remote Alpha", "nginx:latest", updateInfo)
-	require.Contains(t, plainMessage, "Environment: Remote Alpha")
-}
-
-func TestBuildContainerUpdateNotificationMessage_IncludesEnvironment(t *testing.T) {
-	message := notifications.BuildContainerUpdateNotificationMessage(notifications.MessageFormatMarkdown, "Local Lab", "nginx", "nginx:latest", "sha256:old", "sha256:new")
-
-	require.Contains(t, message, "**Environment:** Local Lab")
-	require.Equal(t, 1, strings.Count(message, "Environment"))
-}
-
-func TestBuildBatchImageUpdateNotificationMessage_EnvironmentAppearsOnce(t *testing.T) {
-	updates := map[string]*types.ImageUpdateResponse{
-		"nginx:latest": newNotificationTestUpdateInfo(),
-		"redis:latest": {
-			HasUpdate:     true,
-			UpdateType:    "minor",
-			CurrentDigest: "sha256:redis-current",
-			LatestDigest:  "sha256:redis-latest",
-			CheckTime:     time.Date(2026, time.January, 9, 15, 4, 5, 0, time.UTC),
-		},
-	}
-
-	message := notifications.BuildBatchImageUpdateNotificationMessage(notifications.MessageFormatMarkdown, "Cluster One", updates, false)
-	require.Contains(t, message, "**Environment:** Cluster One")
-	require.Equal(t, 1, strings.Count(message, "Environment"))
 }
 
 func TestBuildVulnerabilitySummaryNotificationMessage_IncludesEnvironment(t *testing.T) {
@@ -513,7 +411,7 @@ func TestNotificationService_CreateOrUpdateSettingsKeepsConfigWhenDisabled(t *te
 		"host":  "ntfy.example",
 		"topic": "arcane",
 		"events": map[string]any{
-			"image_update": true,
+			"auto_heal":    true,
 			"prune_report": false,
 		},
 	})
@@ -524,7 +422,7 @@ func TestNotificationService_CreateOrUpdateSettingsKeepsConfigWhenDisabled(t *te
 		"host":  "ntfy.example",
 		"topic": "arcane",
 		"events": map[string]any{
-			"image_update": true,
+			"auto_heal":    true,
 			"prune_report": false,
 		},
 	})
@@ -635,11 +533,8 @@ func TestNotificationService_DispatchNotificationForEnvironment_ResolvesTunnelSe
 
 	// No access token involved: the environment comes from the tunnel session (#3002).
 	resp, err := svc.DispatchNotificationForEnvironment(ctx, "env-agent", types.NotificationDispatchRequest{
-		Kind: types.NotificationDispatchKindImageUpdate,
-		ImageUpdate: &types.NotificationDispatchImageUpdate{
-			ImageRef:   "nginx:latest",
-			UpdateInfo: *newNotificationTestUpdateInfo(),
-		},
+		Kind:     types.NotificationDispatchKindAutoHeal,
+		AutoHeal: &types.NotificationDispatchAutoHeal{ContainerName: "nginx", ContainerID: "abc123"},
 	})
 	require.NoError(t, err)
 	require.Equal(t, "Notification dispatched successfully", resp.Message)
@@ -653,12 +548,9 @@ func TestNotificationService_AgentDispatchRequiresTunnel(t *testing.T) {
 	db := setupNotificationTestDB(t)
 	svc := newNotificationTestService(t, db, &config.Config{AgentEnabled: true})
 
-	_, err := svc.dispatchNotificationToManager(ctx, types.NotificationDispatchRequest{
-		Kind: types.NotificationDispatchKindImageUpdate,
-		ImageUpdate: &types.NotificationDispatchImageUpdate{
-			ImageRef:   "nginx:latest",
-			UpdateInfo: *newNotificationTestUpdateInfo(),
-		},
+	err := svc.dispatchNotificationToManager(ctx, types.NotificationDispatchRequest{
+		Kind:     types.NotificationDispatchKindAutoHeal,
+		AutoHeal: &types.NotificationDispatchAutoHeal{ContainerName: "nginx", ContainerID: "abc123"},
 	})
 	require.ErrorIs(t, err, agent.ErrNoActiveAgentTunnel)
 }

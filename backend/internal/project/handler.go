@@ -45,7 +45,6 @@ type (
 		Sort          string `query:"sort" doc:"Column to sort by"`
 		Order         string `query:"order" default:"asc" doc:"Sort direction (asc or desc)"`
 		Status        string `query:"status" doc:"Filter by status (comma-separated: running,stopped,partially running)"`
-		Updates       string `query:"updates" doc:"Filter by update status (has_update, up_to_date, error, unknown)"`
 		Archived      string `query:"archived" doc:"Archived filter: 'true' (only archived), 'all' (include archived). Default excludes archived."`
 		Tags          string `query:"tags" doc:"Filter by tag names (comma-separated, OR semantics)"`
 		Label         string `query:"label" doc:"Filter by container label key or key=value on any running service"`
@@ -70,8 +69,8 @@ type (
 	ProjectActionInput struct {
 		EnvironmentID string   `path:"id" doc:"Environment ID"`
 		ProjectID     string   `path:"projectId" doc:"Project ID"`
-		Action        string   `query:"action" required:"true" enum:"down,restart,archive,unarchive,updateservices" doc:"Project action"`
-		Services      []string `query:"services,explode" doc:"Service names for restart or updateservices; empty targets all services"`
+		Action        string   `query:"action" required:"true" enum:"down,restart,archive,unarchive" doc:"Project action"`
+		Services      []string `query:"services,explode" doc:"Service names for restart; empty targets all services"`
 	}
 
 	CreateProjectInput struct {
@@ -140,7 +139,6 @@ type (
 		FailureMessage  string
 		SuccessComplete string
 		SuccessMessage  string
-		Queue           bool
 	}
 
 	GetProjectWorkspaceInput struct {
@@ -166,9 +164,6 @@ func (h *ProjectHandler) ListProjects(ctx context.Context, input *ListProjectsIn
 	params := handlerutil.PaginationParams(input.Start, input.Limit, input.Sort, input.Order, input.Search)
 	if input.Status != "" {
 		params.Filters["status"] = input.Status
-	}
-	if input.Updates != "" {
-		params.Filters["updates"] = input.Updates
 	}
 	if input.Archived != "" {
 		params.Filters["archived"] = input.Archived
@@ -463,29 +458,6 @@ func (h *ProjectHandler) RunProjectAction(ctx context.Context, input *ProjectAct
 				return huma.Error400BadRequest("Failed to restart project: " + err.Error())
 			},
 		},
-		"updateservices": {
-			ActivityType:    types.ActivityTypeAutoUpdate,
-			Step:            "Updating project services",
-			StartMessage:    "Project services update requested",
-			WriterStep:      "Updating project services",
-			FailureMessage:  "Project services update failed",
-			SuccessComplete: "Project services updated",
-			SuccessMessage:  "Project services updated successfully",
-			Queue:           true,
-			Action: func(runtimeCtx context.Context, projectID string, user types.Actor) error {
-				return h.projectService.UpdateProjectServices(runtimeCtx, projectID, ServiceUpdateOptions{
-					User:         user,
-					Services:     input.Services,
-					DiscoverTags: true,
-				})
-			},
-			Error: func(err error) error {
-				if errors.Is(err, common.ErrProjectArchived) {
-					return huma.Error400BadRequest(err.Error())
-				}
-				return huma.Error400BadRequest("Failed to update project: " + err.Error())
-			},
-		},
 	}[input.Action]
 	return h.runProjectActivityAction(ctx, input.EnvironmentID, input.ProjectID, cfg)
 }
@@ -665,13 +637,6 @@ func (h *ProjectHandler) GetProjectRuntime(ctx context.Context, input *GetProjec
 	})
 }
 
-func (h *ProjectHandler) GetProjectUpdates(ctx context.Context, input *GetProjectInput) (*handlerutil.Out[types.Project], error) {
-	return h.getProjectDetailsWithOptions(ctx, input, types.ProjectDetailsOptions{
-		IncludeServiceConfigs: true,
-		IncludeUpdateInfo:     true,
-	})
-}
-
 func (h *ProjectHandler) DestroyProject(ctx context.Context, input *DestroyProjectInput) (*handlerutil.Out[types.MessageResponse], error) {
 	return h.runProjectActivityAction(ctx, input.EnvironmentID, input.ProjectID, projectActivityActionConfig{
 		ActivityType:    types.ActivityTypeProjectDestroy,
@@ -750,7 +715,6 @@ func (h *ProjectHandler) UpdateProject(ctx context.Context, input *UpdateProject
 		IncludeIncludeFiles:    true,
 		IncludeServiceConfigs:  true,
 		IncludeRuntimeServices: true,
-		IncludeUpdateInfo:      true,
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError("Failed to get project details: " + err.Error())
@@ -765,7 +729,6 @@ func (h *ProjectHandler) UpdateProject(ctx context.Context, input *UpdateProject
 				ActivityID:            mo.EmptyableToOption(strings.TrimSpace(activityID)).ToPointer(),
 				LastSyncCommit:        details.LastSyncCommit,
 				GitOpsManagedBy:       details.GitOpsManagedBy,
-				UpdateInfo:            details.UpdateInfo,
 				ArchivedAt:            details.ArchivedAt,
 				Status:                details.Status,
 				DirName:               details.DirName,
@@ -798,7 +761,6 @@ func (h *ProjectHandler) UpdateProject(ctx context.Context, input *UpdateProject
 				IncludeFiles:          details.IncludeFiles,
 				RunningCount:          details.RunningCount,
 				ServiceCount:          details.ServiceCount,
-				IsDiscovered:          details.IsDiscovered,
 				IsArchived:            details.IsArchived,
 				HasBuildDirective:     details.HasBuildDirective,
 				RedeployDisabled:      details.RedeployDisabled,
@@ -829,11 +791,7 @@ func (h *ProjectHandler) runProjectActivityAction(ctx context.Context, environme
 		Step:          cfg.Step,
 		Message:       cfg.StartMessage,
 		Metadata:      kit.Ternary(cfg.Metadata == nil, database.JSON{"projectID": projectID}, cfg.Metadata),
-		Queue:         cfg.Queue,
 	})
-	if cfg.Queue {
-		activitylib.AwaitHandlerActivitySlot(runtimeCtx, h.activityService, activityID, environmentID)
-	}
 	activityWriter := activitylib.NewWriter(runtimeCtx, activitylib.WriterOptions{
 		Service:     h.activityService,
 		ActivityID:  activityID,

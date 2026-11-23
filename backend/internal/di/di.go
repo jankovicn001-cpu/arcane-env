@@ -3,7 +3,6 @@ package di
 import (
 	"context"
 	"log/slog"
-	"net/http"
 	"os"
 
 	"github.com/moby/moby/client"
@@ -31,7 +30,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/gitrepo"
 	"getarcane.dev/arcane/v3/internal/health"
 	"getarcane.dev/arcane/v3/internal/image"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/job"
 	"getarcane.dev/arcane/v3/internal/kv"
 	"getarcane.dev/arcane/v3/internal/ldap"
@@ -51,7 +49,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/swarm"
 	"getarcane.dev/arcane/v3/internal/system"
 	"getarcane.dev/arcane/v3/internal/template"
-	"getarcane.dev/arcane/v3/internal/updater"
 	"getarcane.dev/arcane/v3/internal/upload"
 	"getarcane.dev/arcane/v3/internal/user"
 	"getarcane.dev/arcane/v3/internal/variable"
@@ -106,6 +103,9 @@ var (
 					tokens.InvalidateUser(userID)
 				}
 			},
+			func(roles *role.RoleService) environment.PermissionsInvalidator {
+				return roles.InvalidateAllUsers
+			},
 			fx.Annotate(environment.NewEnvironmentService,
 				fx.OnStart(func(ctx context.Context, service *environment.EnvironmentService) error {
 					return service.LoadAccessTokens(ctx)
@@ -113,8 +113,7 @@ var (
 			),
 			apns.NewApnsService,
 			notification.NewNotificationService,
-			fx.Annotate(provideVulnerabilityService, fx.As(fx.Self()), fx.As(new(updater.VulnerabilityScanner))),
-			provideImageUpdateService,
+			provideVulnerabilityService,
 			provideImageService,
 			build.NewBuildService,
 			project.NewLifecycleService,
@@ -125,7 +124,7 @@ var (
 			enrollment.NewEnrollmentService,
 			template.NewTemplateService,
 			oidc.NewOidcService,
-			fx.Annotate(provideSystemService, fx.As(fx.Self()), fx.As(new(updater.SelfUpgrader))),
+			provideSystemService,
 			diagnostics.NewDiagnosticsService,
 			provideGitOpsSyncService,
 			fx.Annotate(variable.NewVariableService, fx.As(fx.Self()), fx.As(new(environment.VariableSyncer))),
@@ -180,24 +179,11 @@ var (
 				})
 			},
 			provideBackupEngine,
-			func(
-				httpClient *http.Client,
-				cfg *config.Config,
-				localRegistry *registry.ContainerRegistryService,
-				localDocker *docker.DockerClientService,
-				eventService *event.EventService,
-				imageUpdate *imageupdate.ImageUpdateService,
-				settingsService *settings.SettingsService,
-			) *version.VersionService {
+			func(localDocker *docker.DockerClientService) *version.VersionService {
 				return version.NewVersionService(version.VersionServiceParams{
-					HTTPClient:               httpClient,
-					AppVersion:               config.Version,
-					Revision:                 config.Revision,
-					ContainerRegistryService: localRegistry,
-					DockerService:            localDocker,
-					EventService:             eventService,
-					ImageUpdateService:       imageUpdate,
-					SettingsService:          settingsService,
+					AppVersion:    config.Version,
+					Revision:      config.Revision,
+					DockerService: localDocker,
 				})
 			},
 			func(db *database.DB, cfg *config.Config, eventService *event.EventService, settingsService *settings.SettingsService) *gitrepo.GitRepositoryService {
@@ -214,7 +200,7 @@ var (
 					SettingsService: settingsService,
 				})
 			},
-			func(localDocker *docker.DockerClientService, notificationService *notification.NotificationService) *podman.Service {
+			func(localDocker *docker.DockerClientService) *podman.Service {
 				return podman.NewService(podman.Config{
 					Engine: localDocker.Engine,
 					ContainerLabels: func(ctx context.Context, containerRef string) (map[string]string, error) {
@@ -235,10 +221,8 @@ var (
 							Rootless: rootless,
 						})
 					},
-					NotifyUpdates: notificationService.SendBatchContainerUpdateNotification,
 				})
 			},
-			provideUpdaterService,
 			provideAuthMiddleware,
 		),
 		fx.Provide(
@@ -257,7 +241,6 @@ var (
 			podman.New,
 			system.New,
 			volume.New,
-			updater.New,
 			webhook.New,
 			apns.New,
 			notification.New,
@@ -277,9 +260,6 @@ var (
 					Changes:                        eventService.Changes,
 					EnvironmentChanges:             eventService.EnvironmentChanges,
 				})
-			},
-			func(service *imageupdate.ImageUpdateService, imageService *image.ImageService) *imageupdate.Module {
-				return imageupdate.New(service, imageService.GetUpdateInfoByImageRefs)
 			},
 			func(service *settings.SettingsService, search *settings.SettingsSearchService, localEnvironment *environment.EnvironmentService, cfg *config.Config, mtls *agent.MTLS) *settings.Module {
 				return settings.New(settings.ModuleParams{
@@ -311,8 +291,6 @@ var (
 
 	JobOptions = fx.Options(
 		fx.Provide(
-			fx.Annotate(scheduler.NewAutoUpdateJob, fx.ResultTags(`name:"auto-update"`)),
-			scheduler.NewImageUpdateWatcher,
 			scheduler.NewDockerClientRefreshJob,
 			scheduler.NewAnalyticsJob,
 			scheduler.NewEventCleanupJob,
@@ -328,7 +306,6 @@ var (
 			scheduler.NewUploadSessionsCleanupJob,
 			scheduler.NewGitCloneCleanupJob,
 			scheduler.NewBackupRepositoryPruneJob,
-			fx.Annotate(scheduler.NewUpgradeLogCleanupJob, fx.ResultTags(`name:"upgrade-log-cleanup"`)),
 			scheduler.NewApnsOutboxJob,
 			scheduler.NewLdapSyncJob,
 		),

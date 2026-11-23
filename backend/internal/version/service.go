@@ -1,21 +1,14 @@
 package version
 
 import (
-	"cmp"
 	"context"
-	"encoding/json/v2"
-	"errors"
-	"fmt"
 	"log/slog"
-	"net/http"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/distribution/reference"
 	"github.com/moby/moby/client"
-	"github.com/samber/mo"
 	"golang.org/x/mod/semver"
 
 	"kit.getarcane.app"
@@ -28,198 +21,39 @@ import (
 	"getarcane.dev/arcane/v3/internal/apns"
 	"getarcane.dev/arcane/v3/internal/config"
 	"getarcane.dev/arcane/v3/internal/docker"
-	"getarcane.dev/arcane/v3/internal/event"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
-	"getarcane.dev/arcane/v3/internal/registry"
-	"getarcane.dev/arcane/v3/internal/settings"
-	arcaneregistry "getarcane.dev/arcane/v3/pkg/registry"
 	"getarcane.dev/arcane/v3/pkg/selfcontainer"
 	"getarcane.dev/types/v3"
 )
 
 type (
-	latestRelease struct {
-		TagName     string
-		Body        string
-		PublishedAt string
-	}
-
-	nextImage struct {
-		Version  string
-		Revision string
-	}
-
 	currentImageInfo struct {
-		Tag          string
-		Digest       string
-		ImageRef     string
-		ImageID      string
-		DigestPinned bool
+		Tag    string
+		Digest string
 	}
 
 	VersionService struct {
-		httpClient               *http.Client
-		cache                    *cache.Cache[struct{}, latestRelease]
-		commitNotesCache         *cache.Cache[string, string]
-		containerRegistryService *registry.ContainerRegistryService
-		dockerService            *docker.DockerClientService
-		eventService             *event.EventService
-		imageUpdateService       *imageupdate.ImageUpdateService
-		settingsService          *settings.SettingsService
-		streamHub                *agg.Hub[types.VersionStreamEvent]
-		currentImage             *cache.Cache[struct{}, currentImageInfo]
-		version                  string
-		revision                 string
+		dockerService *docker.DockerClientService
+		currentImage  *cache.Cache[struct{}, currentImageInfo]
+		version       string
+		revision      string
 	}
 
 	VersionServiceParams struct {
-		HTTPClient               *http.Client
-		ContainerRegistryService *registry.ContainerRegistryService
-		DockerService            *docker.DockerClientService
-		EventService             *event.EventService
-		ImageUpdateService       *imageupdate.ImageUpdateService
-		SettingsService          *settings.SettingsService
-		AppVersion               string
-		Revision                 string
+		DockerService *docker.DockerClientService
+		AppVersion    string
+		Revision      string
 	}
-)
-
-const (
-	versionStreamPollInterval = 5 * time.Minute
-	versionTTL                = 3 * time.Hour
-	versionCheckURL           = "https://api.github.com/repos/getarcaneapp/arcane/releases/latest"
-	commitNotesTTL            = 24 * time.Hour
-	defaultRequestTimeout     = 15 * time.Second
 )
 
 func NewVersionService(p VersionServiceParams) *VersionService {
-	if p.HTTPClient == nil {
-		p.HTTPClient = http.DefaultClient
-	}
-	var service *VersionService
-	service = &VersionService{
-		httpClient: p.HTTPClient,
-		cache: &cache.Cache[struct{}, latestRelease]{
-			Load: func(struct{}) (latestRelease, bool, error) {
-				ctx, cancel := context.WithTimeout(context.Background(), defaultRequestTimeout) //nolint:forbidigo // Cache revalidation runs independently of request cancellation.
-				defer cancel()
-				release, err := service.fetchLatestRelease(ctx)
-				if err != nil {
-					slog.WarnContext(ctx, "Failed to fetch latest Arcane release; skipping update checks until the cache expires", "error", err)
-					return latestRelease{}, true, nil
-				}
-				return release, true, nil
-			},
-			Revalidate: func(struct{}) (latestRelease, bool, error) {
-				ctx, cancel := context.WithTimeout(context.Background(), defaultRequestTimeout) //nolint:forbidigo // Cache revalidation runs independently of request cancellation.
-				defer cancel()
-				release, err := service.fetchLatestRelease(ctx)
-				if err != nil {
-					return latestRelease{}, false, err
-				}
-				return release, true, nil
-			},
-			Capacity:        1,
-			TTL:             versionTTL,
-			RevalidateAfter: 24 * time.Hour,
-		},
-		version:                  p.AppVersion,
-		revision:                 p.Revision,
-		containerRegistryService: p.ContainerRegistryService,
-		dockerService:            p.DockerService,
-		eventService:             p.EventService,
-		imageUpdateService:       p.ImageUpdateService,
-		settingsService:          p.SettingsService,
-		streamHub:                &agg.Hub[types.VersionStreamEvent]{},
+	return &VersionService{
+		version:       p.AppVersion,
+		revision:      p.Revision,
+		dockerService: p.DockerService,
 		currentImage: &cache.Cache[struct{}, currentImageInfo]{
 			Capacity: 1,
 		},
-		commitNotesCache: &cache.Cache[string, string]{
-			Capacity: 16,
-			TTL:      commitNotesTTL,
-		},
 	}
-	return service
-}
-
-func (s *VersionService) getLatestRelease(ctx context.Context) (latestRelease, error) {
-	type lookup struct {
-		err     error
-		release latestRelease
-		found   bool
-	}
-	result := make(chan lookup, 1)
-	go func() {
-		release, found, err := s.cache.Get(struct{}{})
-		result <- lookup{
-			release: release,
-			found:   found,
-			err:     err,
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return latestRelease{}, fmt.Errorf("wait for latest release: %w", ctx.Err())
-	case res := <-result:
-		if res.err != nil {
-			return latestRelease{}, res.err
-		}
-		if !res.found {
-			return latestRelease{}, errors.New("latest release cache loader returned no release")
-		}
-		return res.release, nil
-	}
-}
-
-func (s *VersionService) fetchLatestRelease(ctx context.Context) (latestRelease, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionCheckURL, http.NoBody)
-	if err != nil {
-		return latestRelease{}, fmt.Errorf("create GitHub request: %w", err)
-	}
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return latestRelease{}, fmt.Errorf("get latest release: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return latestRelease{}, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
-	}
-
-	var payload struct {
-		TagName     string `json:"tag_name"`
-		Body        string `json:"body"`
-		PublishedAt string `json:"published_at"`
-	}
-	if unmarshalReadErr := json.UnmarshalRead(resp.Body, &payload); unmarshalReadErr != nil {
-		return latestRelease{}, fmt.Errorf("decode payload: %w", unmarshalReadErr)
-	}
-	if payload.TagName == "" {
-		return latestRelease{}, errors.New("GitHub API returned empty tag name")
-	}
-
-	return latestRelease{
-		TagName:     payload.TagName,
-		Body:        payload.Body,
-		PublishedAt: payload.PublishedAt,
-	}, nil
-}
-
-func (s *VersionService) GetLatestVersion(ctx context.Context) (string, error) {
-	rel, err := s.getLatestRelease(ctx)
-	if err != nil {
-		return "", err
-	}
-	return rel.TagName, nil
-}
-
-func (s *VersionService) IsNewer(latest, current string) bool {
-	latest = s.normalizeVersion(latest)
-	current = s.normalizeVersion(current)
-
-	return semver.Compare(latest, current) > 0
 }
 
 func (s *VersionService) normalizeVersion(ver string) string {
@@ -245,163 +79,14 @@ func (s *VersionService) normalizeVersion(ver string) string {
 	return ver
 }
 
-func (s *VersionService) ReleaseURL(localVersion string) string {
-	if strings.TrimSpace(localVersion) == "" {
-		return "https://github.com/getarcaneapp/arcane/releases/latest"
-	}
-
-	return "https://github.com/getarcaneapp/arcane/releases/tag/" + kit.EnsurePrefix(localVersion, "v")
-}
-
-func (s *VersionService) GetVersionInformation(ctx context.Context, currentVersion string) (*types.VersionCheck, error) {
-	cur := s.normalizeVersion(cmp.Or(currentVersion, s.version))
-
-	latest, err := func() (string, error) {
-		if !s.settingsService.GetBoolSetting(ctx, "updateCheckEnabled") {
-			return "", nil
-		}
-		return s.GetLatestVersion(ctx)
-	}()
-	// Skip when latest is semver-older than current (e.g. a prerelease build
-	// asking the stable release feed) — a downgrade is not a newest version.
-	newest := kit.Ternary(err == nil && latest != "" && !s.IsNewer(cur, latest), latest, "")
-	return &types.VersionCheck{
-		CurrentVersion:  cur,
-		NewestVersion:   newest,
-		UpdateAvailable: newest != "" && s.IsNewer(newest, cur),
-		ReleaseURL:      s.ReleaseURL(newest),
-	}, err
-}
-
-func (s *VersionService) isChannelBuild(currentTag string) bool {
-	return strings.Contains(strings.ToLower(strings.TrimSpace(s.version)), "-next.") ||
-		strings.Contains(strings.ToLower(strings.TrimSpace(s.version)), "-beta.") ||
-		strings.TrimSpace(currentTag) == "next" ||
-		strings.HasSuffix(strings.TrimSpace(currentTag), "-beta")
-}
-
-func (s *VersionService) resolveNextImage(ctx context.Context, imageRef, tag, newestDigest string) nextImage {
-	newestDigest, tag = strings.TrimSpace(newestDigest), strings.TrimSpace(tag)
-	if strings.TrimSpace(imageRef) == "" || (newestDigest == "" && tag == "") {
-		return nextImage{}
-	}
-
-	lookupRef := kit.Ternary(newestDigest != "", imageRef+"@"+newestDigest, imageRef+":"+tag)
-
-	cfg, err := s.containerRegistryService.ImageConfig(ctx, lookupRef, registry.ImageConfigOptions{})
-	if err != nil {
-		slog.WarnContext(ctx, "Failed to resolve next-channel image config", "imageRef", lookupRef, "error", err)
-		return nextImage{}
-	}
-	if strings.TrimSpace(cfg.Config.Labels[registry.OCIImageVersionLabel]) == "" {
-		slog.WarnContext(ctx, "Next-channel image has no version label", "imageRef", lookupRef)
-		return nextImage{}
-	}
-
-	normalized := s.normalizeVersion(cfg.Config.Labels[registry.OCIImageVersionLabel])
-	if !semver.IsValid(normalized) {
-		slog.WarnContext(ctx, "Next-channel image version label is not valid semver", "imageRef", lookupRef, "label", cfg.Config.Labels[registry.OCIImageVersionLabel])
-	}
-	return nextImage{
-		Version:  kit.Ternary(semver.IsValid(normalized), normalized, ""),
-		Revision: strings.TrimSpace(cfg.Config.Labels[registry.OCIImageRevisionLabel]),
-	}
-}
-
-func (s *VersionService) updateCheckImageRef(currentImageRef string) string {
-	target := strings.TrimSpace(s.settingsService.GetSettingsConfig().UpdateCheckRegistry.Value)
-	if target == "" || target == "auto" {
-		return currentImageRef
-	}
-
-	named, err := reference.ParseNormalizedNamed(strings.TrimSpace(currentImageRef))
-	if err != nil || !strings.HasPrefix(reference.Path(named), "getarcaneapp/") {
-		return currentImageRef
-	}
-
-	host := arcaneregistry.ArcaneImageRegistryHost(target)
-	repoPath := reference.Path(named)
-	// Docker Hub and ECR Public publish the images under the manager and agent names only
-	if host == arcaneregistry.DefaultRegistryDomain || host == arcaneregistry.ECRPublicRegistryHost {
-		switch repoPath {
-		case "getarcaneapp/arcane":
-			repoPath = "getarcaneapp/manager"
-		case "getarcaneapp/arcane-headless":
-			repoPath = "getarcaneapp/agent"
-		}
-	}
-	return kit.Ternary(host == reference.Domain(named) && repoPath == reference.Path(named), currentImageRef, host+"/"+repoPath)
-}
-
 func (s *VersionService) GetAppVersionInfo(ctx context.Context) *types.VersionInfo {
 	isSemver := semver.IsValid(kit.EnsurePrefix(s.version, "v"))
-	ver := s.normalizeVersion(s.version)
 	// Semver versions (including prereleases like 2.4.0-next.1) display as v<version>.
 	displayVersion := strings.TrimPrefix(strings.TrimSpace(s.version), "v")
-
 	current := s.detectCurrentImageInfo(ctx)
 
-	// Update fields stay empty when update checks are disabled.
-	update := func() types.VersionInfo {
-		if !s.settingsService.GetBoolSetting(ctx, "updateCheckEnabled") {
-			return types.VersionInfo{}
-		}
-		checkImageRef := s.updateCheckImageRef(current.ImageRef)
-		digestUpdateAvailable, latestDigest := s.storedOrDigestBasedUpdate(ctx, current, checkImageRef)
-
-		switch {
-		case isSemver && s.isChannelBuild(current.Tag):
-			next := s.resolveNextImage(ctx, checkImageRef, current.Tag, latestDigest)
-			info := types.VersionInfo{
-				NewestDigest:    latestDigest,
-				NewestVersion:   kit.Ternary(next.Version != "" && semver.Compare(next.Version, ver) >= 0, next.Version, ""),
-				UpdateAvailable: digestUpdateAvailable || (next.Version != "" && s.IsNewer(next.Version, ver)),
-			}
-			if !commitSHAPattern.MatchString(strings.ToLower(strings.TrimSpace(s.revision))) ||
-				!commitSHAPattern.MatchString(strings.ToLower(strings.TrimSpace(next.Revision))) ||
-				strings.EqualFold(s.revision, next.Revision) {
-				return info
-			}
-			return types.VersionInfo{
-				NewestDigest:    info.NewestDigest,
-				NewestVersion:   info.NewestVersion,
-				UpdateAvailable: info.UpdateAvailable,
-				ReleaseURL:      (repoURL + "/compare/" + s.revision + "..." + next.Revision),
-				ReleaseNotes:    s.commitNotes(ctx, s.revision, next.Revision),
-			}
-		case isSemver:
-			// Never surface a release older than the running version as the target.
-			rel, err := s.getLatestRelease(ctx)
-			if err != nil || rel.TagName == "" || s.IsNewer(ver, rel.TagName) {
-				return types.VersionInfo{NewestDigest: latestDigest}
-			}
-			return types.VersionInfo{
-				NewestDigest:    latestDigest,
-				NewestVersion:   rel.TagName,
-				UpdateAvailable: s.IsNewer(rel.TagName, ver),
-				ReleaseURL:      s.ReleaseURL(rel.TagName),
-				ReleaseNotes:    rel.Body,
-				ReleasedAt:      rel.PublishedAt,
-			}
-		}
-
-		// Best-effort: pull release notes for non-semver track too, so the modal can preview
-		// the latest tagged release even when the running build is digest-tracking.
-		rel, err := s.getLatestRelease(ctx)
-		if err != nil || rel.TagName == "" {
-			return types.VersionInfo{NewestDigest: latestDigest, UpdateAvailable: digestUpdateAvailable}
-		}
-		return types.VersionInfo{
-			NewestDigest:    latestDigest,
-			UpdateAvailable: digestUpdateAvailable,
-			ReleaseURL:      s.ReleaseURL(rel.TagName),
-			ReleaseNotes:    rel.Body,
-			ReleasedAt:      rel.PublishedAt,
-		}
-	}()
-
 	return &types.VersionInfo{
-		CurrentVersion:   ver,
+		CurrentVersion:   s.normalizeVersion(s.version),
 		CurrentTag:       current.Tag,
 		CurrentDigest:    current.Digest,
 		DisplayVersion:   kit.Ternary(isSemver, "v"+displayVersion, displayVersion),
@@ -414,41 +99,7 @@ func (s *VersionService) GetAppVersionInfo(ctx context.Context) *types.VersionIn
 		BuildTime:        config.BuildTime,
 		IsSemverVersion:  isSemver,
 		IsStableVersion:  isSemver && semver.Prerelease(kit.EnsurePrefix(s.version, "v")) == "",
-		NewestVersion:    update.NewestVersion,
-		NewestDigest:     update.NewestDigest,
-		UpdateAvailable:  update.UpdateAvailable,
-		ReleaseURL:       update.ReleaseURL,
-		ReleaseNotes:     update.ReleaseNotes,
-		ReleasedAt:       update.ReleasedAt,
 	}
-}
-
-// storedOrDigestBasedUpdate uses the stored poller row only when the check targets the running, unpinned reference.
-func (s *VersionService) storedOrDigestBasedUpdate(ctx context.Context, current currentImageInfo, checkImageRef string) (bool, string) {
-	if strings.TrimSpace(current.ImageID) != "" && checkImageRef == current.ImageRef && !current.DigestPinned {
-		record, found, err := s.imageUpdateService.StoredUpdateByImageID(ctx, current.ImageID)
-		if err != nil {
-			slog.WarnContext(ctx, "Failed to read stored Arcane image update state", "imageId", current.ImageID, "error", err)
-		} else if found {
-			return record.HasUpdate, mo.PointerToOption(record.LatestDigest).OrEmpty()
-		}
-	}
-
-	if current.Tag == "" || current.Digest == "" || checkImageRef == "" {
-		return false, ""
-	}
-
-	latestDigest, err := s.containerRegistryService.ImageDigest(ctx, checkImageRef+":"+current.Tag)
-	if err != nil {
-		slog.WarnContext(ctx, "Failed to fetch latest digest for tag", "tag", current.Tag, "error", err)
-		return false, ""
-	}
-
-	updateAvailable := current.Digest != latestDigest && latestDigest != ""
-	if updateAvailable {
-		slog.InfoContext(ctx, "Digest-based update available", "tag", current.Tag, "currentDigest", current.Digest, "latestDigest", latestDigest)
-	}
-	return updateAvailable, latestDigest
 }
 
 func (s *VersionService) detectCurrentImageInfo(ctx context.Context) (detected currentImageInfo) {
@@ -498,30 +149,22 @@ func (s *VersionService) detectCurrentImageInfo(ctx context.Context) (detected c
 		slog.DebugContext(ctx, "detectCurrentImageInfo: failed to inspect container", "containerId", containerId, "error", err)
 		return currentImageInfo{}
 	}
-	configImage := kit.FromPtr(inspectResult.Container.Config).Image
 
-	// The tag comes from the user-specified config image; the repository falls back to it too.
-	tag, imageRef := "latest", configImage
-	named, parseErr := reference.ParseNormalizedNamed(configImage)
-	if parseErr == nil {
-		imageRef = named.Name()
+	// The tag comes from the user-specified config image.
+	tag := "latest"
+	if named, parseErr := reference.ParseNormalizedNamed(kit.FromPtr(inspectResult.Container.Config).Image); parseErr == nil {
 		if tagged, ok := named.(reference.Tagged); ok {
 			tag = tagged.Tag()
 		}
 	}
-	_, digestPinned := named.(reference.Digested)
-	base := currentImageInfo{
-		Tag:          tag,
-		ImageRef:     imageRef,
-		ImageID:      inspectResult.Container.Image,
-		DigestPinned: digestPinned,
-	}
+	base := currentImageInfo{Tag: tag}
 
-	if base.ImageID == "" {
+	imageID := inspectResult.Container.Image
+	if imageID == "" {
 		return base
 	}
 	imageInspect, err := s.dockerService.Call(ctx, func(ctx context.Context, cli *client.Client) (client.ImageInspectResult, error) {
-		return cli.ImageInspect(ctx, base.ImageID)
+		return cli.ImageInspect(ctx, imageID)
 	})
 	if err != nil {
 		return base
@@ -532,74 +175,13 @@ func (s *VersionService) detectCurrentImageInfo(ctx context.Context) (detected c
 			continue
 		}
 		if digested, ok := repoNamed.(reference.Digested); ok {
-			return currentImageInfo{
-				Tag:          base.Tag,
-				Digest:       string(digested.Digest()),
-				ImageRef:     repoNamed.Name(),
-				ImageID:      base.ImageID,
-				DigestPinned: base.DigestPinned,
-			}
+			return currentImageInfo{Tag: base.Tag, Digest: string(digested.Digest())}
 		}
 	}
 	return base
 }
 
+// RunStreamProducer sends one snapshot; the running version only changes on restart.
 func (s *VersionService) RunStreamProducer(ctx context.Context, events chan<- types.VersionStreamEvent) {
-	s.streamHub.Subscribe(ctx, "local",
-		func(runCtx context.Context, publish func(types.VersionStreamEvent)) {
-			var last *types.VersionInfo
-			poll := func() {
-				info := s.GetAppVersionInfo(runCtx)
-				if runCtx.Err() != nil {
-					return
-				}
-				if last != nil {
-					if last.UpdateAvailable == info.UpdateAvailable &&
-						last.NewestVersion == info.NewestVersion &&
-						last.NewestDigest == info.NewestDigest &&
-						last.CurrentTag == info.CurrentTag &&
-						last.CurrentDigest == info.CurrentDigest &&
-						last.ReleaseURL == info.ReleaseURL &&
-						last.ReleaseNotes == info.ReleaseNotes &&
-						last.ReleasedAt == info.ReleasedAt {
-						return
-					}
-				}
-				last = info
-				publish(types.VersionStreamEvent{Type: "snapshot", Info: info, Timestamp: time.Now()})
-			}
-
-			imageUpdated := make(chan struct{}, 1)
-			var lastImageUpdate atomic.Uint64
-			lastImageUpdate.Store(s.eventService.EnvironmentChanges("0").Kinds["image_update"])
-			unsubscribe := s.eventService.Changes.Subscribe(func(changes types.EnvironmentChanges) {
-				if changes.EnvironmentID != "0" || lastImageUpdate.Swap(changes.Kinds["image_update"]) == changes.Kinds["image_update"] {
-					return
-				}
-				select {
-				case imageUpdated <- struct{}{}:
-				default:
-				}
-			})
-			defer unsubscribe()
-
-			poll()
-
-			ticker := time.NewTicker(versionStreamPollInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-runCtx.Done():
-					return
-				case <-ticker.C:
-					poll()
-				case <-imageUpdated:
-					poll()
-				}
-			}
-		},
-		func(event types.VersionStreamEvent) bool {
-			return agg.Send(ctx, events, event)
-		})
+	agg.Send(ctx, events, types.VersionStreamEvent{Type: "snapshot", Info: s.GetAppVersionInfo(ctx), Timestamp: time.Now()})
 }

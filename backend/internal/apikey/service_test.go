@@ -53,6 +53,16 @@ func setupAPIKeyServiceTestDB(t *testing.T) *database.DB {
 		&role.ApiKeyPermission{},
 		&role.OidcRoleMapping{},
 	))
+	// User group tables belong to a role child package; permission resolution only needs them to exist.
+	for _, ddl := range []string{
+		"CREATE TABLE IF NOT EXISTS user_groups (id text PRIMARY KEY, name text)",
+		"CREATE TABLE IF NOT EXISTS user_group_links (id text PRIMARY KEY, user_group_id text, kind text, value text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_members (id text PRIMARY KEY, user_group_id text, user_id text, source text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_role_assignments " +
+			"(id text PRIMARY KEY, user_group_id text, role_id text, environment_id text, environment_group_id text, created_at datetime, updated_at datetime)",
+	} {
+		require.NoError(t, db.Exec(ddl).Error)
+	}
 
 	sqlDB, err := db.DB()
 	require.NoError(t, err)

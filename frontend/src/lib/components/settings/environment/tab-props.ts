@@ -25,10 +25,6 @@ export interface StorageTabProps extends LockableFormTabProps {
 	environmentId?: string;
 }
 
-export interface DockerTabProps extends FormTabProps {
-	environmentId: string;
-}
-
 export interface AutomationsTabProps extends LockableFormTabProps {
 	environments: EnvironmentRef[];
 }

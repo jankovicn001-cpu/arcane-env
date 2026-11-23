@@ -1,68 +1,23 @@
 <script lang="ts">
-	import { toast } from 'svelte-sonner';
-
 	import { HardenedImageBadge } from '#lib/components/badges/index.js';
 	import { DetailMetaStrip, DetailSection, KeyValueCard, type DetailMetaItem } from '#lib/components/resource-detail/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { Switch } from '#lib/components/ui/switch/index.js';
 	import { PlayIcon, StopIcon, NetworksIcon, VolumesIcon, HealthIcon } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
-	import { containerService } from '#lib/services/container-service.js';
 	import type { ContainerDetails } from '#lib/types/container.js';
-	import { extractApiErrorMessage } from '#lib/utils/api.js';
 	import { formatDateTimeShort, formatElapsedTime, formatRelativeTime, parseInstant } from '#lib/utils/formatting.js';
 	import { hardenedSupportSummary } from '#lib/utils/hardened-images.js';
-	import { tryCatch } from '#lib/utils/try-catch.js';
 
 	interface Props {
 		container: ContainerDetails;
-		environmentId: string;
 		primaryIpAddress: string;
-		autoUpdateEnabled?: boolean;
-		autoUpdateLabelControlled?: boolean;
-		autoUpdateStatusAvailable?: boolean;
-		onAutoUpdateChange?: (enabled: boolean) => void | Promise<void>;
 		onViewPortMappings?: () => void;
 		onViewStorage?: () => void;
 		onViewNetworks?: () => void;
 	}
 
-	let {
-		container,
-		environmentId,
-		primaryIpAddress,
-		autoUpdateEnabled = true,
-		autoUpdateLabelControlled = false,
-		autoUpdateStatusAvailable = true,
-		onAutoUpdateChange,
-		onViewPortMappings,
-		onViewStorage,
-		onViewNetworks
-	}: Props = $props();
-
-	let autoUpdateToggling = $state(false);
-
-	async function handleAutoUpdateToggle(checked: boolean) {
-		autoUpdateToggling = true;
-		try {
-			const saved = await tryCatch(containerService.setAutoUpdate(container.id, checked, environmentId));
-			if (saved.error !== null) {
-				toast.error(m.auto_update_failed(), { description: extractApiErrorMessage(saved.error) });
-				return;
-			}
-			toast.success(checked ? m.auto_update_enabled_toast() : m.auto_update_disabled_toast());
-			// The setting is saved at this point; a failed reload must not read as a failed toggle.
-			const refreshResult = await tryCatch(Promise.resolve(onAutoUpdateChange?.(checked)));
-			if (refreshResult.error !== null) {
-				toast.error(m.common_refresh_failed({ resource: m.resource_container() }), {
-					description: extractApiErrorMessage(refreshResult.error)
-				});
-			}
-		} finally {
-			autoUpdateToggling = false;
-		}
-	}
+	let { container, primaryIpAddress, onViewPortMappings, onViewStorage, onViewNetworks }: Props = $props();
 
 	const createdInstant = $derived(parseInstant(container.created));
 	const startedInstant = $derived(parseInstant(container.state?.startedAt));
@@ -166,35 +121,6 @@
 
 			<KeyValueCard label={m.common_restart_policy()} valueFormat="text">
 				<span class="capitalize">{restartPolicy}</span>
-			</KeyValueCard>
-
-			<KeyValueCard label={m.auto_update_title()} stacked>
-				<div class="flex items-center gap-3">
-					<Switch
-						checked={autoUpdateEnabled}
-						disabled={autoUpdateToggling || autoUpdateLabelControlled || !autoUpdateStatusAvailable}
-						onCheckedChange={handleAutoUpdateToggle}
-					/>
-					<span class="text-sm font-medium text-foreground">
-						{#if !autoUpdateStatusAvailable}
-							{m.common_na()}
-						{:else if autoUpdateEnabled}
-							{m.common_enabled()}
-						{:else}
-							{m.common_disabled()}
-						{/if}
-					</span>
-				</div>
-				{#if !autoUpdateStatusAvailable}
-					<span class="text-xs text-muted-foreground">{m.auto_update_status_unavailable()}</span>
-				{:else}
-					{#if autoUpdateLabelControlled}
-						<span class="text-xs text-muted-foreground">{m.auto_update_controlled_by_label()}</span>
-					{/if}
-					{#if !autoUpdateEnabled}
-						<span class="text-xs text-muted-foreground">{m.auto_update_disabled_checks_continue()}</span>
-					{/if}
-				{/if}
 			</KeyValueCard>
 
 			<KeyValueCard label={m.common_ports()} valueFormat="text" stacked>

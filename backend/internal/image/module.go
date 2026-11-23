@@ -11,7 +11,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/docker"
 	"getarcane.dev/arcane/v3/internal/image/children/attestations"
 	"getarcane.dev/arcane/v3/internal/image/children/patch"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/middleware"
 	"getarcane.dev/arcane/v3/internal/settings"
 	"getarcane.dev/arcane/v3/internal/upload"
@@ -22,13 +21,12 @@ import (
 
 type (
 	Module struct {
-		service     *ImageService
-		docker      *docker.DockerClientService
-		imageUpdate *imageupdate.ImageUpdateService
-		settings    *settings.SettingsService
-		build       *build.BuildService
-		activity    *activity.ActivityService
-		upload      *upload.UploadService
+		service  *ImageService
+		docker   *docker.DockerClientService
+		settings *settings.SettingsService
+		build    *build.BuildService
+		activity *activity.ActivityService
+		upload   *upload.UploadService
 
 		attestationsHandler *attestations.Handler
 	}
@@ -38,7 +36,6 @@ type (
 
 		Service         *ImageService
 		DockerService   *docker.DockerClientService
-		ImageUpdate     *imageupdate.ImageUpdateService
 		SettingsService *settings.SettingsService
 		BuildService    *build.BuildService
 		ActivityService *activity.ActivityService
@@ -50,7 +47,6 @@ func New(p Params) *Module {
 	return &Module{
 		service:             p.Service,
 		docker:              p.DockerService,
-		imageUpdate:         p.ImageUpdate,
 		settings:            p.SettingsService,
 		build:               p.BuildService,
 		activity:            p.ActivityService,
@@ -68,12 +64,12 @@ func (m *Module) Service() *ImageService {
 
 func (m *Module) RegisterRoutes(api huma.API, appCtx handlerutil.ActivityAppContext) {
 	if m == nil {
-		RegisterImages(api, nil, nil, nil, nil, nil, nil, nil, appCtx)
+		RegisterImages(api, nil, nil, nil, nil, nil, nil, appCtx)
 		attestations.RegisterRoutes(api, attestations.NewHandler(nil))
 		patch.RegisterRoutes(api, nil, appCtx)
 		return
 	}
-	RegisterImages(api, m.docker, m.service, m.imageUpdate, m.settings, m.build, m.activity, m.upload, appCtx)
+	RegisterImages(api, m.docker, m.service, m.settings, m.build, m.activity, m.upload, appCtx)
 	attestations.RegisterRoutes(api, m.attestationsHandler)
 	patch.RegisterRoutes(api, m.service.patch, appCtx)
 }
@@ -82,7 +78,6 @@ func RegisterImages(
 	api huma.API,
 	dockerService *docker.DockerClientService,
 	imageService *ImageService,
-	imageUpdateService *imageupdate.ImageUpdateService,
 	settingsService *settings.SettingsService,
 	buildService *build.BuildService,
 	activityService *activity.ActivityService,
@@ -90,14 +85,13 @@ func RegisterImages(
 	appCtx handlerutil.ActivityAppContext,
 ) {
 	h := &ImageHandler{
-		dockerService:      dockerService,
-		imageService:       imageService,
-		imageUpdateService: imageUpdateService,
-		settingsService:    settingsService,
-		buildService:       buildService,
-		activityService:    activityService,
-		uploadService:      uploadService,
-		appCtx:             appCtx.Context(),
+		dockerService:   dockerService,
+		imageService:    imageService,
+		settingsService: settingsService,
+		buildService:    buildService,
+		activityService: activityService,
+		uploadService:   uploadService,
+		appCtx:          appCtx.Context(),
 	}
 
 	middleware.RegisterWithPermission(api, huma.Operation{

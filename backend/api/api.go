@@ -33,7 +33,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/gitrepo"
 	"getarcane.dev/arcane/v3/internal/health"
 	"getarcane.dev/arcane/v3/internal/image"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/job"
 	"getarcane.dev/arcane/v3/internal/ldap"
 	"getarcane.dev/arcane/v3/internal/middleware"
@@ -52,7 +51,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/system"
 	"getarcane.dev/arcane/v3/internal/telemetry"
 	"getarcane.dev/arcane/v3/internal/template"
-	"getarcane.dev/arcane/v3/internal/updater"
 	"getarcane.dev/arcane/v3/internal/upload"
 	"getarcane.dev/arcane/v3/internal/user"
 	"getarcane.dev/arcane/v3/internal/variable"
@@ -87,7 +85,6 @@ type (
 		Port              *port.PortService
 		Swarm             *swarm.Module
 		Podman            *podman.Module
-		ImageUpdate       *imageupdate.Module
 		Auth              *auth.Module
 		AuthTokens        *auth.TokenCache
 		Passkey           *passkey.PasskeyService
@@ -97,7 +94,6 @@ type (
 		ContainerRegistry *registry.Module
 		System            *system.Module
 		Diagnostics       *diagnostics.DiagnosticsService
-		Updater           *updater.Module
 		Event             *event.Module
 		Activity          *activity.Module
 		Version           *version.VersionService
@@ -229,7 +225,6 @@ func SetupAPI(p SetupParams) *authz.OperationRecorder {
 	p.Deps.Image.RegisterRoutes(api, p.AppContext)
 	p.Deps.Upload.RegisterRoutes(api)
 	build.RegisterBuildWorkspaces(api, p.Deps.Build, p.Deps.Upload.Service())
-	p.Deps.ImageUpdate.RegisterRoutes(api, p.AppContext)
 	p.Deps.Settings.RegisterRoutes(api)
 	p.Deps.S3Destination.RegisterRoutes(api)
 	p.Deps.JobSchedule.RegisterRoutes(api)
@@ -241,14 +236,13 @@ func SetupAPI(p SetupParams) *authz.OperationRecorder {
 	p.Deps.Podman.RegisterRoutes(api)
 	p.Deps.Notification.RegisterRoutes(api)
 	p.Deps.Apns.RegisterRoutes(api)
-	p.Deps.Updater.RegisterRoutes(api, p.AppContext)
 	p.Deps.System.RegisterRoutes(api, p.AppContext)
 	handlers.RegisterDiagnostics(api, p.Deps.Diagnostics)
 	p.Deps.GitRepository.RegisterRoutes(api)
 	p.Deps.GitOpsSync.RegisterRoutes(api)
 	p.Deps.Webhook.RegisterRoutes(api, p.AppContext)
 	p.Deps.Vulnerability.RegisterRoutes(api, p.AppContext)
-	handlers.RegisterStream(api, p.Deps.Activity.Handler(), p.Deps.Environment.Handler(), p.Deps.Event.Service(), p.Deps.Version, p.Deps.System.Service())
+	handlers.RegisterStream(api, p.Deps.Activity.Handler(), p.Deps.Environment.Handler(), p.Deps.Event.Service(), p.Deps.Version)
 
 	if !p.Config.AgentEnabled {
 		telemetry.RegisterRoutes(api, telemetry.NewService())

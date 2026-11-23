@@ -77,16 +77,6 @@ var jobMetadataRegistry = map[string]JobMetadata{
 		CanRunManually: true,
 		Prerequisites:  []JobPrerequisiteMetadata{},
 	},
-	"upgrade-log-cleanup": {
-		ID:             "upgrade-log-cleanup",
-		Name:           "Upgrade Log Cleanup",
-		Description:    "Removes upgrade logs older than the configured retention period",
-		Category:       "maintenance",
-		ManagerOnly:    false,
-		IsContinuous:   false,
-		CanRunManually: true,
-		Prerequisites:  []JobPrerequisiteMetadata{},
-	},
 	"expired-sessions-cleanup": {
 		ID:             "expired-sessions-cleanup",
 		Name:           "Expired Sessions Cleanup",
@@ -125,44 +115,6 @@ var jobMetadataRegistry = map[string]JobMetadata{
 		IsContinuous:   false,
 		CanRunManually: true,
 		Prerequisites:  []JobPrerequisiteMetadata{},
-	},
-	"auto-update": {
-		ID:             "auto-update",
-		Name:           "Auto Update",
-		Description:    "Automatically updates containers when new images are available",
-		Category:       "updates",
-		SettingsKey:    "autoUpdateInterval",
-		EnabledKey:     "autoUpdate",
-		ManagerOnly:    false,
-		IsContinuous:   false,
-		CanRunManually: true,
-		Prerequisites: []JobPrerequisiteMetadata{
-			{
-				SettingKey: "pollingEnabled",
-				Label:      "Image polling enabled",
-			},
-			{
-				SettingKey: "autoUpdate",
-				Label:      "Auto update enabled",
-			},
-		},
-	},
-	"image-polling": {
-		ID:             "image-polling",
-		Name:           "Image Update Watcher",
-		Description:    "Checks container registries on a schedule and after Docker image changes",
-		Category:       "updates",
-		SettingsKey:    "pollingInterval",
-		EnabledKey:     "pollingEnabled",
-		ManagerOnly:    false,
-		IsContinuous:   true,
-		CanRunManually: true,
-		Prerequisites: []JobPrerequisiteMetadata{
-			{
-				SettingKey: "pollingEnabled",
-				Label:      "Image polling enabled",
-			},
-		},
 	},
 	"scheduled-prune": {
 		ID:             "scheduled-prune",

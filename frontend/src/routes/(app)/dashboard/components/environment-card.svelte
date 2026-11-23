@@ -1,14 +1,12 @@
 <script lang="ts">
 	import { ActionButtonGroup, type ActionButton } from '#lib/components/action-button-group/index.js';
-	import * as ArcaneTooltip from '#lib/components/arcane-tooltip/index.js';
-	import { Badge, badgeVariants } from '#lib/components/ui/badge/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { CpuIcon, GpuIcon, MemoryStickIcon, VolumesIcon } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import type { SystemStats } from '#lib/types/system.js';
 	import type { DashboardEnvironmentOverview, DashboardLiveStatsStatus } from '#lib/types/ui/dashboard.js';
-	import type { VersionInfo } from '#lib/types/version.js';
 	import { cn } from '#lib/utils.js';
 	import { isEnvironmentOnline } from '#lib/utils/docker.js';
 
@@ -27,23 +25,15 @@
 		getRoleBadge,
 		shouldLoadEnvironment
 	} from '../overview.helpers';
-	import EnvironmentUpgradeAction from './environment-upgrade-action.svelte';
 	import MetricTile from './metric-tile.svelte';
 
-	// These bindings target record entries that start undefined; Svelte rejects a bindable fallback here.
 	let {
 		overview,
 		systemStats,
 		liveStatsStatus,
 		countsLoading,
 		attentionCount,
-		menuButtons,
-		debugUpgrade = false,
-		debugVersionInfo,
-		canUpgrade,
-		upgradeOpen = $bindable(undefined),
-		upgradeLoading = $bindable(undefined),
-		onRefreshRequested
+		menuButtons
 	}: {
 		overview: DashboardEnvironmentOverview;
 		systemStats: SystemStats | null;
@@ -51,19 +41,12 @@
 		countsLoading: boolean;
 		attentionCount: number;
 		menuButtons: ActionButton[];
-		debugUpgrade?: boolean;
-		debugVersionInfo: VersionInfo;
-		canUpgrade: boolean;
-		upgradeOpen?: boolean;
-		upgradeLoading?: boolean;
-		onRefreshRequested: () => void | Promise<void>;
 	} = $props();
 
 	const environment = $derived(overview.environment);
 	const roleBadge = $derived(getRoleBadge(environment));
 	const activity = $derived(getActivityMeta(environment));
-	const versionInfo = $derived(overview.versionInfo ?? (debugUpgrade ? debugVersionInfo : null));
-	const newestVersionLabel = $derived(versionInfo?.newestVersion ?? versionInfo?.newestDigest?.slice(0, 12));
+	const versionInfo = $derived(overview.versionInfo);
 	const cpuMetric = $derived(getCpuMetric(systemStats));
 	const memoryMetric = $derived(getMemoryMetric(systemStats));
 	const diskMetric = $derived(getDiskMetric(systemStats));
@@ -82,42 +65,9 @@
 							<Badge variant="purple" size="sm">{m.podman()}</Badge>
 						{/if}
 						{#if versionInfo}
-							<div class="flex items-center">
-								{#if versionInfo.updateAvailable || debugUpgrade}
-									<ArcaneTooltip.Root>
-										<ArcaneTooltip.Trigger
-											class={cn(badgeVariants({ variant: 'gray', size: 'sm' }), 'font-mono hover:text-foreground')}
-										>
-											{versionInfo.displayVersion || versionInfo.currentTag || versionInfo.currentVersion || m.common_unknown()}
-											<span class="relative ml-1.5 flex h-2 w-2">
-												<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-75"></span>
-												<span class="relative inline-flex h-2 w-2 rounded-full bg-warning"></span>
-											</span>
-										</ArcaneTooltip.Trigger>
-										<ArcaneTooltip.Content>
-											<div class="flex flex-col items-start gap-2">
-												<span
-													>{m.sidebar_update_available()}{#if newestVersionLabel}: {newestVersionLabel}{/if}</span
-												>
-												<EnvironmentUpgradeAction
-													{environment}
-													{versionInfo}
-													{canUpgrade}
-													debug={debugUpgrade}
-													{onRefreshRequested}
-													render="trigger"
-													bind:open={upgradeOpen}
-													bind:upgrading={upgradeLoading}
-												/>
-											</div>
-										</ArcaneTooltip.Content>
-									</ArcaneTooltip.Root>
-								{:else}
-									<Badge variant="gray" size="sm" mono>
-										{versionInfo.displayVersion || versionInfo.currentTag || versionInfo.currentVersion || m.common_unknown()}
-									</Badge>
-								{/if}
-							</div>
+							<Badge variant="gray" size="sm" mono>
+								{versionInfo.displayVersion || versionInfo.currentTag || versionInfo.currentVersion || m.common_unknown()}
+							</Badge>
 						{/if}
 					</div>
 

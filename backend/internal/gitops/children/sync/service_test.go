@@ -22,7 +22,6 @@ import (
 	dockerInternal "getarcane.dev/arcane/v3/internal/docker"
 	"getarcane.dev/arcane/v3/internal/event"
 	"getarcane.dev/arcane/v3/internal/gitrepo"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	projectpkg "getarcane.dev/arcane/v3/internal/project"
 	"getarcane.dev/arcane/v3/internal/settings"
 	"getarcane.dev/arcane/v3/pkg/gitutil"
@@ -44,7 +43,7 @@ func setupSyncTestService(t *testing.T) (*Service, *database.DB, string) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&projectpkg.Project{}, &projectpkg.GitOpsSync{}, &settings.SettingVariable{}, &imageupdate.ImageUpdateRecord{}, &event.Event{}))
+	require.NoError(t, db.AutoMigrate(&projectpkg.Project{}, &projectpkg.GitOpsSync{}, &settings.SettingVariable{}, &event.Event{}))
 	arcaneDB := &database.DB{DB: db}
 
 	settingsService, err := settings.NewSettingsService(settings.SettingsServiceParams{

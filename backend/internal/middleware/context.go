@@ -15,21 +15,18 @@ type (
 )
 
 const (
-	HeaderAgentToken                            = "X-Arcane-Agent-Token" // #nosec G101: header name, not a credential
-	HeaderApiKey                                = "X-Api-Key"            // #nosec G101: header name, not a credential
-	HeaderActivityBatchID                       = "X-Arcane-Batch-Id"
-	HeaderUpdateInitiatorID                     = "X-Arcane-Update-Initiator-Id"
-	HeaderUpdateInitiatorName                   = "X-Arcane-Update-Initiator-Name"
-	HeaderUpdateInitiatorDisplayName            = "X-Arcane-Update-Initiator-Display-Name"
-	HeaderForwardedPermissions                  = "X-Arcane-Forwarded-Permissions"
-	HeaderIconCatalog                           = "X-Arcane-Icon-Catalog"
-	ContextKeyApiKeyID               ContextKey = "apiKeyID"
-	ContextKeyUserID                 ContextKey = "userID"
-	ContextKeyCurrentSessionID       ContextKey = "currentSessionID"
-	ContextKeyUserPermissions        ContextKey = "userPermissions"
-	ContextKeyRemoteAddr             ContextKey = "remoteAddr"
-	ContextKeyCurrentUser            ContextKey = "currentUser"
-	ContextKeyAuthMethod             ContextKey = "authMethod"
+	HeaderAgentToken                      = "X-Arcane-Agent-Token" // #nosec G101: header name, not a credential
+	HeaderApiKey                          = "X-Api-Key"            // #nosec G101: header name, not a credential
+	HeaderActivityBatchID                 = "X-Arcane-Batch-Id"
+	HeaderForwardedPermissions            = "X-Arcane-Forwarded-Permissions"
+	HeaderIconCatalog                     = "X-Arcane-Icon-Catalog"
+	ContextKeyApiKeyID         ContextKey = "apiKeyID"
+	ContextKeyUserID           ContextKey = "userID"
+	ContextKeyCurrentSessionID ContextKey = "currentSessionID"
+	ContextKeyUserPermissions  ContextKey = "userPermissions"
+	ContextKeyRemoteAddr       ContextKey = "remoteAddr"
+	ContextKeyCurrentUser      ContextKey = "currentUser"
+	ContextKeyAuthMethod       ContextKey = "authMethod"
 )
 
 func GetUserIDFromContext(ctx context.Context) (string, bool) {

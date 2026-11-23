@@ -1,0 +1,243 @@
+package recovery
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/moby/moby/client"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"kit.getarcane.app/updater/labels"
+)
+
+func TestNormalizeRecreatedArcaneLabels(t *testing.T) {
+	tests := []struct {
+		labels     map[string]string
+		want       map[string]string
+		wantSource map[string]string
+		name       string
+	}{
+		{
+			name: "legacy server gains current Arcane label",
+			labels: map[string]string{
+				labels.LabelArcaneLegacyServer: "true",
+				labels.LabelUpdater:            "false",
+				"com.example.unrelated":        "keep",
+			},
+			want: map[string]string{
+				labels.LabelArcaneLegacyServer: "true",
+				labels.LabelArcane:             "true",
+				labels.LabelUpdater:            "false",
+				"com.example.unrelated":        "keep",
+			},
+			wantSource: map[string]string{
+				labels.LabelArcaneLegacyServer: "true",
+				labels.LabelUpdater:            "false",
+				"com.example.unrelated":        "keep",
+			},
+		},
+		{
+			name: "agent gains current Arcane label",
+			labels: map[string]string{
+				labels.LabelArcaneAgent: "true",
+			},
+			want: map[string]string{
+				labels.LabelArcane:      "true",
+				labels.LabelArcaneAgent: "true",
+			},
+			wantSource: map[string]string{
+				labels.LabelArcaneAgent: "true",
+			},
+		},
+		{
+			name: "unrelated labels are preserved without Arcane label",
+			labels: map[string]string{
+				"com.example.unrelated": "keep",
+			},
+			want: map[string]string{
+				"com.example.unrelated": "keep",
+			},
+			wantSource: map[string]string{
+				"com.example.unrelated": "keep",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeRecreatedArcaneLabels(tt.labels)
+
+			require.Equal(t, tt.want, got)
+			require.Equal(t, tt.wantSource, tt.labels)
+		})
+	}
+}
+
+func TestRefreshRecreatedImageLabels(t *testing.T) {
+	containerLabels := map[string]string{
+		"ORG.OPENCONTAINERS.IMAGE.VERSION":  "v2.6.0-next.30",
+		"org.opencontainers.image.revision": "old-revision",
+		"org.opencontainers.image.authors":  "https://container.example/override",
+		"com.docker.compose.image":          "sha256:old-image",
+		"com.docker.compose.project":        "arcane",
+		labels.LabelArcane:                  "true",
+		labels.LabelUpdater:                 "false",
+		"com.example.custom":                "keep",
+	}
+	originalContainerLabels := map[string]string{
+		"ORG.OPENCONTAINERS.IMAGE.VERSION":  "v2.6.0-next.30",
+		"org.opencontainers.image.revision": "old-revision",
+		"org.opencontainers.image.authors":  "https://container.example/override",
+		"com.docker.compose.image":          "sha256:old-image",
+		"com.docker.compose.project":        "arcane",
+		labels.LabelArcane:                  "true",
+		labels.LabelUpdater:                 "false",
+		"com.example.custom":                "keep",
+	}
+	targetImageLabels := map[string]string{
+		"org.opencontainers.image.version":  "v2.7.0-next.17",
+		"org.opencontainers.image.revision": "new-revision",
+		"org.opencontainers.image.authors":  "new-author",
+		"org.opencontainers.image.title":    "Arcane",
+		"com.example.image":                 "must-not-be-copied",
+	}
+	previousImageLabels := map[string]string{
+		"org.opencontainers.image.version":  "v2.6.0-next.30",
+		"org.opencontainers.image.revision": "old-revision",
+		"org.opencontainers.image.authors":  "old-author",
+	}
+
+	got := refreshRecreatedImageLabels(containerLabels, previousImageLabels, targetImageLabels, "sha256:new-image")
+
+	require.Equal(t, map[string]string{
+		"org.opencontainers.image.version":  "v2.7.0-next.17",
+		"org.opencontainers.image.revision": "new-revision",
+		"org.opencontainers.image.authors":  "https://container.example/override",
+		"org.opencontainers.image.title":    "Arcane",
+		"com.docker.compose.image":          "sha256:new-image",
+		"com.docker.compose.project":        "arcane",
+		labels.LabelArcane:                  "true",
+		labels.LabelUpdater:                 "false",
+		"com.example.custom":                "keep",
+	}, got)
+	require.Equal(t, originalContainerLabels, containerLabels)
+}
+
+func TestRefreshRecreatedContainerLabelsInternalPreservesLabelsWhenTargetInspectFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "/images/target:latest/json",
+			"unexpected Docker API request: %s %s", r.Method, r.URL.Path)
+
+		http.Error(w, "target inspect failed", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	dockerClient, err := client.New(
+		client.WithHost("tcp://"+strings.TrimPrefix(server.URL, "http://")),
+		client.WithAPIVersion("1.41"),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = dockerClient.Close() })
+
+	containerLabels := map[string]string{
+		"org.opencontainers.image.version": "v2.6.0-next.30",
+		"org.opencontainers.image.authors": "operator",
+		"com.docker.compose.image":         "sha256:old-image",
+	}
+
+	got := refreshRecreatedContainerLabels(
+		t.Context(),
+		dockerClient,
+		containerLabels,
+		"sha256:old-image",
+		"target:latest",
+	)
+
+	require.Equal(t, containerLabels, got)
+	got["org.opencontainers.image.version"] = "changed"
+	require.Equal(t, "v2.6.0-next.30", containerLabels["org.opencontainers.image.version"])
+}
+
+func TestRefreshRecreatedContainerLabelsInternalPreservesOverridesWhenPreviousInspectFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/images/target:latest/json"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Id":"sha256:new-image","Config":{"Labels":{"org.opencontainers.image.version":"v2.7.0-next.17","org.opencontainers.image.title":"Arcane"}}}`))
+		case strings.Contains(r.URL.Path, "/images/sha256:old-image/json"):
+			http.Error(w, "previous inspect failed", http.StatusInternalServerError)
+		default:
+			assert.Failf(t, "unexpected failure", "unexpected Docker API request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	dockerClient, err := client.New(
+		client.WithHost("tcp://"+strings.TrimPrefix(server.URL, "http://")),
+		client.WithAPIVersion("1.41"),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = dockerClient.Close() })
+
+	containerLabels := map[string]string{
+		"org.opencontainers.image.version": "v2.6.0-next.30",
+		"org.opencontainers.image.authors": "operator",
+		"com.docker.compose.image":         "sha256:old-image",
+	}
+
+	got := refreshRecreatedContainerLabels(
+		t.Context(),
+		dockerClient,
+		containerLabels,
+		"sha256:old-image",
+		"target:latest",
+	)
+
+	require.Equal(t, map[string]string{
+		"org.opencontainers.image.version": "v2.6.0-next.30",
+		"org.opencontainers.image.authors": "operator",
+		"org.opencontainers.image.title":   "Arcane",
+		"com.docker.compose.image":         "sha256:new-image",
+	}, got)
+}
+
+func TestApplyRecoveredEnvironmentRenamesLegacyKeys(t *testing.T) {
+	result := applyRecoveredEnvironment([]string{
+		"PORT=4000",
+		"ENCRYPTION_KEY_FILE=/run/secrets/key",
+		"AGENT_TOKEN__FILE=/run/secrets/agent",
+		"TLS_CERT_FILE=/certs/tls.crt",
+		"LOG_LEVEL=debug",
+		"ARCANE_LOG_LEVEL=info",
+		"PUID=1000",
+	}, nil)
+
+	require.ElementsMatch(t, []string{
+		"ARCANE_PORT=4000",
+		"ARCANE_ENCRYPTION_KEY_FILE=/run/secrets/key",
+		"ARCANE_AGENT_TOKEN__FILE=/run/secrets/agent",
+		"ARCANE_TLS_CERT_FILE=/certs/tls.crt",
+		"LOG_LEVEL=debug",
+		"ARCANE_LOG_LEVEL=info",
+		"PUID=1000",
+	}, result)
+}
+
+func TestApplyRecoveredEnvironment(t *testing.T) {
+	result := applyRecoveredEnvironment([]string{
+		"ARCANE_AGENT_TOKEN=fresh", "ARCANE_AGENT_TOKEN_FILE=/run/secrets/agent", "ARCANE_ENCRYPTION_KEY__FILE=/run/secrets/key", "KEEP=value",
+	}, map[string]string{"ARCANE_AGENT_TOKEN": "recovered-agent", "ARCANE_ENCRYPTION_KEY": "recovered-key", "NEW_SETTING": "new"})
+
+	require.Contains(t, result, "ARCANE_AGENT_TOKEN=recovered-agent")
+	require.Contains(t, result, "ARCANE_ENCRYPTION_KEY=recovered-key")
+	require.Contains(t, result, "NEW_SETTING=new")
+	require.Contains(t, result, "KEEP=value")
+	require.False(t, slices.ContainsFunc(result, func(value string) bool {
+		return value == "ARCANE_AGENT_TOKEN_FILE=/run/secrets/agent" || value == "ARCANE_ENCRYPTION_KEY__FILE=/run/secrets/key"
+	}))
+}

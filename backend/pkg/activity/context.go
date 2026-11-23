@@ -3,17 +3,13 @@ package activity
 import (
 	"context"
 	"regexp"
-	"strings"
 	"time"
-
-	"getarcane.dev/types/v3"
 )
 
 type (
 	appLifecycleContextKey struct{}
 
 	activityBatchIDContextKey struct{}
-	updateInitiatorContextKey struct{}
 
 	activityRuntimeContext struct {
 		valueCtx     context.Context
@@ -22,20 +18,6 @@ type (
 )
 
 var activityBatchIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-
-func WithUpdateInitiator(ctx context.Context, initiator types.ActivityStartedBy) context.Context {
-	initiator.UserID = strings.TrimSpace(initiator.UserID)
-	initiator.Username = strings.TrimSpace(initiator.Username)
-	if initiator.UserID == "" || initiator.Username == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, updateInitiatorContextKey{}, initiator)
-}
-
-func UpdateInitiatorFromContext(ctx context.Context) (types.ActivityStartedBy, bool) {
-	initiator, ok := ctx.Value(updateInitiatorContextKey{}).(types.ActivityStartedBy)
-	return initiator, ok
-}
 
 func WithActivityBatchID(ctx context.Context, batchID string) context.Context {
 	if ctx == nil {

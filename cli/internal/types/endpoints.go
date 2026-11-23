@@ -6,7 +6,6 @@ import (
 )
 
 const (
-	VersionEndpoint    = "/api/version"
 	AppVersionEndpoint = "/api/app/version"
 )
 
@@ -54,6 +53,10 @@ func UserRoleAssignments(userID string) string {
 	return pathf("/api/users/%s/roles", userID)
 }
 
+func UserGroups() string { return "/api/user-groups" }
+
+func UserGroup(id string) string { return pathf("/api/user-groups/%s", id) }
+
 func Roles() string { return "/api/roles" }
 
 func Role(id string) string { return pathf("/api/roles/%s", id) }
@@ -73,6 +76,10 @@ func Environments() string { return "/api/agents" }
 func Environment(id string) string { return pathf("/api/agents/%s", id) }
 
 func EnvironmentTest(envID string) string { return pathf("/api/agents/%s/test", envID) }
+
+func EnvironmentGroups() string { return "/api/environment-groups" }
+
+func EnvironmentGroup(id string) string { return pathf("/api/environment-groups/%s", id) }
 
 func EnvironmentTunnelRestart(envID string) string {
 	return pathf("/api/agents/%s/tunnel/restart", envID)
@@ -100,20 +107,12 @@ func ContainerCommit(envID, containerID string) string {
 	return pathf("/api/agents/%s/containers/%s/commit", envID, containerID)
 }
 
-func ContainerUpdate(envID, containerID string) string {
-	return pathf("/api/agents/%s/containers/%s/update", envID, containerID)
-}
-
 func ContainerRedeploy(envID, containerID string) string {
 	return pathf("/api/agents/%s/containers/%s/redeploy", envID, containerID)
 }
 
 func ContainerConfig(envID, containerID string) string {
 	return pathf("/api/agents/%s/containers/%s/config", envID, containerID)
-}
-
-func ContainerAutoUpdate(envID, containerID string) string {
-	return pathf("/api/agents/%s/containers/%s/autoupdate", envID, containerID)
 }
 
 func ContainersCounts(envID string) string {
@@ -170,22 +169,6 @@ func UploadSession(envID, kind, uploadID string) string {
 
 func UploadSessionChunk(envID, kind, uploadID string, index int) string {
 	return pathf("/api/agents/%s/uploads/%s/%s/chunks/%d", envID, kind, uploadID, index)
-}
-
-func ImageUpdatesCheck(envID, imageRef string) string {
-	return pathf("/api/agents/%s/images/updates/check", envID) + "?" + url.Values{"imageRef": {imageRef}}.Encode()
-}
-
-func ImageUpdatesCheckAction(envID, action string) string {
-	return pathf("/api/agents/%s/images/updates/check", envID) + "?" + url.Values{"action": {action}}.Encode()
-}
-
-func ImageUpdatesCheckById(envID, imageID string) string {
-	return pathf("/api/agents/%s/images/updates/check/%s", envID, imageID)
-}
-
-func ImageUpdatesSummary(envID string) string {
-	return pathf("/api/agents/%s/images/updates/summary", envID)
 }
 
 func Networks(envID string) string { return pathf("/api/agents/%s/networks", envID) }
@@ -335,28 +318,6 @@ func SystemContainersAction(envID, action string) string {
 }
 
 func SystemConvert(envID string) string { return pathf("/api/agents/%s/system/convert", envID) }
-
-func SystemUpgrade(envID string) string { return pathf("/api/agents/%s/system/upgrade", envID) }
-
-func SystemUpgradeCheck(envID string) string {
-	return pathf("/api/agents/%s/system/upgrade/check", envID)
-}
-
-func SystemUpgradeJobs(envID string) string {
-	return pathf("/api/agents/%s/system/upgrade/jobs", envID)
-}
-
-func SystemUpgradeJobCurrent(envID string) string {
-	return pathf("/api/agents/%s/system/upgrade/jobs/current", envID)
-}
-
-func UpdaterStatus(envID string) string { return pathf("/api/agents/%s/updater/status", envID) }
-
-func UpdaterRun(envID string) string { return pathf("/api/agents/%s/updater/run", envID) }
-
-func UpdaterHistory(envID string) string {
-	return pathf("/api/agents/%s/updater/history", envID)
-}
 
 func JobSchedules(envID string) string { return pathf("/api/agents/%s/jobs/schedules", envID) }
 
@@ -539,10 +500,6 @@ func Webhook(envID, webhookID string) string {
 func WebhookTrigger(token string) string { return pathf("/api/webhooks/trigger/%s", token) }
 
 func PodmanStatus(envID string) string { return pathf("/api/agents/%s/podman/status", envID) }
-
-func PodmanAutoUpdate(envID string) string {
-	return pathf("/api/agents/%s/podman/autoupdate", envID)
-}
 
 func PodmanPods(envID string) string { return pathf("/api/agents/%s/podman/pods", envID) }
 

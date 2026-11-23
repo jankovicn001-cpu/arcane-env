@@ -5,8 +5,6 @@
 
 	interface Props {
 		providerId: string;
-		eventImageUpdate: boolean;
-		eventContainerUpdate: boolean;
 		eventVulnerabilityFound: boolean;
 		eventPruneReport: boolean;
 		eventAutoHeal: boolean;
@@ -15,8 +13,6 @@
 
 	let {
 		providerId,
-		eventImageUpdate = $bindable(),
-		eventContainerUpdate = $bindable(),
 		eventVulnerabilityFound = $bindable(),
 		eventPruneReport = $bindable(),
 		eventAutoHeal = $bindable(),
@@ -25,31 +21,6 @@
 </script>
 
 <!-- Rendered inside the provider section, so each event is its own row. -->
-<SettingsRow
-	for="{providerId}-event-image-update"
-	label={m.notifications_event_image_update_label()}
-	description={m.notifications_event_image_update_description()}
-	layout="switch"
->
-	{#snippet children({ describedBy })}
-		<Switch id="{providerId}-event-image-update" bind:checked={eventImageUpdate} {disabled} aria-describedby={describedBy} />
-	{/snippet}
-</SettingsRow>
-<SettingsRow
-	for="{providerId}-event-container-update"
-	label={m.notifications_event_container_update_label()}
-	description={m.notifications_event_container_update_description()}
-	layout="switch"
->
-	{#snippet children({ describedBy })}
-		<Switch
-			id="{providerId}-event-container-update"
-			bind:checked={eventContainerUpdate}
-			{disabled}
-			aria-describedby={describedBy}
-		/>
-	{/snippet}
-</SettingsRow>
 <SettingsRow
 	for="{providerId}-event-prune-report"
 	label={m.notifications_event_prune_report_label()}

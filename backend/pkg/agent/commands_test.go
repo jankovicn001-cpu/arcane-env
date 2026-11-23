@@ -93,7 +93,6 @@ func TestResolveCommandName(t *testing.T) {
 		{name: "legacy volume browse absent", method: "GET", path: "/api/agents/0/volumes/data/browse", shouldHit: false},
 		{name: "legacy volume files absent", method: "GET", path: "/api/agents/0/volumes/data/files", shouldHit: false},
 		{name: "project logs stream", method: "GET", path: "/api/agents/0/ws/projects/p1/logs", stream: true, command: "project.logs.stream", shouldHit: true},
-		{name: "project updates", method: "GET", path: "/api/agents/0/projects/p1/updates", command: "project.updates", shouldHit: true},
 		{name: "project action", method: "POST", path: "/api/agents/0/projects/p1?action=archive", command: "project.action", shouldHit: true},
 		{name: "activity list", method: "GET", path: "/api/agents/0/activities?limit=50", command: "activity.list", shouldHit: true},
 		{name: "activity inspect", method: "GET", path: "/api/agents/0/activities/activity-1", command: "activity.inspect", shouldHit: true},
@@ -103,8 +102,7 @@ func TestResolveCommandName(t *testing.T) {
 		{name: "swarm node identity", method: "GET", path: "/api/swarm/identity", command: "swarm.node_identity", shouldHit: true},
 		{name: "ports list", method: "GET", path: "/api/agents/0/ports?limit=20", command: "port.list", shouldHit: true},
 		{name: "network topology", method: "GET", path: "/api/agents/0/networks/topology", command: "network.topology", shouldHit: true},
-		{name: "container auto-update", method: "PUT", path: "/api/agents/0/containers/abc/autoupdate", command: "container.auto_update.set", shouldHit: true},
-		{name: "project update services", method: "POST", path: "/api/agents/0/projects/p1?action=updateservices&services=web", command: "project.action", shouldHit: true},
+		{name: "project restart services", method: "POST", path: "/api/agents/0/projects/p1?action=restart&services=web", command: "project.action", shouldHit: true},
 		{name: "swarm services list", method: "GET", path: "/api/agents/0/swarm/services", command: "swarm.service.list", shouldHit: true},
 		{name: "unknown", method: "PATCH", path: "/api/agents/0/containers", shouldHit: false},
 	}

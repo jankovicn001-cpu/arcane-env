@@ -123,7 +123,6 @@ var (
 		"environments":    "environment",
 		"events":          "event",
 		"git":             "gitops",
-		"image_updates":   "image_update",
 		"images":          "image",
 		"networks":        "network",
 		"projects":        "project",
@@ -178,9 +177,7 @@ var (
 		EventTypeNetworkDisconnect: {"Network disconnected: %s", "A container has been disconnected from network '%s'", EventSeverityInfo},
 		EventTypeNetworkError:      {"Network error: %s", "An error occurred with network '%s'", EventSeverityError},
 
-		EventTypeSystemPrune:      {"System prune completed", "System resources have been pruned", EventSeverityInfo},
-		EventTypeSystemAutoUpdate: {"System auto-update completed", "System auto-update process has completed", EventSeverityInfo},
-		EventTypeSystemUpgrade:    {"System upgrade completed", "System upgrade process has completed", EventSeverityInfo},
+		EventTypeSystemPrune: {"System prune completed", "System resources have been pruned", EventSeverityInfo},
 
 		EventTypeUserLogin:         {"User logged in: %s", "User '%s' has logged in", EventSeverityInfo},
 		EventTypeUserLogout:        {"User logged out: %s", "User '%s' has logged out", EventSeverityInfo},
@@ -1070,10 +1067,6 @@ func (s *EventService) BeginDockerResourceSuppressionWindow(resourceType, resour
 
 func (s *EventService) BeginDockerTypeSuppressionWindow(resourceType string) func() {
 	return s.correlation.BeginTypeWindow(resourceType)
-}
-
-func (s *EventService) SetDockerUpdatingContainers(source func() []string) {
-	s.correlation.SetUpdatingContainers(source)
 }
 
 func (s *EventService) ShouldSuppressDaemonEvent(resourceType, actorID, actorName, composeProject string) bool {

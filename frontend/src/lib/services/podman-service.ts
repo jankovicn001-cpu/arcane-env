@@ -13,8 +13,6 @@ import type {
 	PodInspect,
 	PodPruneReport,
 	PodTop,
-	PodmanAutoUpdateOptions,
-	PodmanAutoUpdateResult,
 	PodmanInfo,
 	PodmanSecret,
 	PodmanSecretCreateRequest,
@@ -42,10 +40,6 @@ class PodmanService extends BaseAPIService {
 
 	async getInfo(environmentId: string, config?: APIRequestConfig): Promise<PodmanInfo> {
 		return this.handleResponse(this.api.get(`/agents/${environmentId}/podman/info`, config));
-	}
-
-	async runAutoUpdate(options: PodmanAutoUpdateOptions = {}, environmentId: string): Promise<PodmanAutoUpdateResult> {
-		return this.handleResponse(this.api.post(`/agents/${environmentId}/podman/autoupdate`, options));
 	}
 
 	async getPods(scope: string, options?: SearchPaginationSortRequest, config?: APIRequestConfig): Promise<Paginated<Pod>> {

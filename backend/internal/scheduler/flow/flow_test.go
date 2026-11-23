@@ -173,7 +173,7 @@ func TestActivityCancelInterruptsRunningStep(t *testing.T) {
 	causes := make(chan error, 1)
 	wf, err := engine.Define(flow.Definition{
 		Name: "flow-cancel", Version: 1, Concurrency: 1, Timeout: time.Minute,
-		Activity: activitylib.StartRequest{Type: types.ActivityTypeAutoUpdate},
+		Activity: activitylib.StartRequest{Type: types.ActivityTypeResourceAction},
 		Steps: []workflow.StepSpec{
 			workflow.Step("block", engine.Handler(func(ctx context.Context, t flow.Task) (any, error) {
 				started <- t.ActivityID()
@@ -216,7 +216,7 @@ func TestStartFinishesSubmittedInstanceWithItsProgress(t *testing.T) {
 	define := func(harness *flowtest.Harness, work func(context.Context, flow.Task) (any, error)) *flow.Workflow {
 		wf, err := harness.Engine.Define(flow.Definition{
 			Name: "flow-orphan", Version: 1, Concurrency: 1, Timeout: time.Minute,
-			Activity: activitylib.StartRequest{Type: types.ActivityTypeAutoUpdate},
+			Activity: activitylib.StartRequest{Type: types.ActivityTypeResourceAction},
 			Steps:    []workflow.StepSpec{workflow.Step("work", harness.Engine.Handler(work))},
 		})
 		require.NoError(t, err)
@@ -309,7 +309,7 @@ func startHost(
 		Version:     version,
 		Concurrency: 2,
 		Timeout:     time.Minute,
-		Activity:    activitylib.StartRequest{Type: types.ActivityTypeAutoUpdate},
+		Activity:    activitylib.StartRequest{Type: types.ActivityTypeResourceAction},
 		Steps:       steps,
 	})
 	require.NoError(t, err)

@@ -27,22 +27,11 @@
 	const targetTypeOptions = $derived([
 		{ value: 'container', label: m.container(), description: m.webhook_target_type_container_description() },
 		{ value: 'project', label: m.project(), description: m.webhook_target_type_project_description() },
-		{ value: 'updater', label: m.updater(), description: m.webhook_target_type_updater_description() },
 		{ value: 'gitops', label: m.gitops(), description: m.webhook_target_type_gitops_description() }
 	]);
 
 	function getDefaultActionType(targetType: WebhookTargetType): WebhookActionType {
-		switch (targetType) {
-			case 'container':
-			case 'project':
-				return 'update';
-			case 'updater':
-				return 'run';
-			case 'gitops':
-				return 'sync';
-			default:
-				return 'update';
-		}
+		return targetType === 'gitops' ? 'sync' : 'redeploy';
 	}
 
 	function getActionTypeOptions(
@@ -51,7 +40,6 @@
 		switch (targetType) {
 			case 'container':
 				return [
-					{ value: 'update', label: m.common_update(), description: m.webhook_action_type_update_description() },
 					{ value: 'start', label: m.common_start(), description: m.webhook_action_type_start_description() },
 					{ value: 'stop', label: m.common_stop(), description: m.webhook_action_type_stop_description() },
 					{ value: 'restart', label: m.common_restart(), description: m.webhook_action_type_restart_description() },
@@ -63,7 +51,6 @@
 				];
 			case 'project':
 				return [
-					{ value: 'update', label: m.common_update(), description: m.webhook_action_type_update_description() },
 					{ value: 'up', label: m.common_up(), description: m.webhook_action_type_up_description() },
 					{ value: 'down', label: m.common_down(), description: m.webhook_action_type_down_description() },
 					{ value: 'restart', label: m.common_restart(), description: m.webhook_action_type_restart_description() },
@@ -73,8 +60,6 @@
 						description: m.webhook_action_type_redeploy_description()
 					}
 				];
-			case 'updater':
-				return [{ value: 'run', label: m.webhook_action_type_run(), description: m.webhook_action_type_run_description() }];
 			case 'gitops':
 				return [{ value: 'sync', label: m.resource_sync_cap(), description: m.webhook_action_type_sync_description() }];
 			default:
@@ -121,12 +106,6 @@
 	}
 
 	async function loadTargetOptions(type: WebhookTargetType, envId: string) {
-		if (type === 'updater') {
-			targetOptions = [];
-			selectedTargetId = '';
-			return;
-		}
-
 		const generation = ++loadGeneration;
 		targetOptionsLoading = true;
 		try {
@@ -161,7 +140,7 @@
 	function handleSubmit() {
 		const data = form.validate();
 		if (!data) return;
-		if (selectedTargetType !== 'updater' && !selectedTargetId) return;
+		if (!selectedTargetId) return;
 
 		onSubmit(
 			{
@@ -231,24 +210,22 @@
 			disabled={actionTypeOptions.length === 1}
 		/>
 
-		{#if selectedTargetType !== 'updater'}
-			<SelectWithLabel
-				id="webhook-target-id"
-				label={targetLabel}
-				description={m.webhook_target_resource_description()}
-				bind:value={selectedTargetId}
-				options={targetOptions}
-				disabled={targetOptionsLoading || targetOptions.length === 0}
-				placeholder={targetOptionsLoading ? m.webhook_target_resource_loading() : m.webhook_target_resource_placeholder()}
-			/>
-		{/if}
+		<SelectWithLabel
+			id="webhook-target-id"
+			label={targetLabel}
+			description={m.webhook_target_resource_description()}
+			bind:value={selectedTargetId}
+			options={targetOptions}
+			disabled={targetOptionsLoading || targetOptions.length === 0}
+			placeholder={targetOptionsLoading ? m.webhook_target_resource_loading() : m.webhook_target_resource_placeholder()}
+		/>
 	</form>
 
 	{#snippet footer()}
 		<SheetFooterActions
 			bind:open
 			cancelDisabled={isLoading}
-			submitDisabled={isLoading || (selectedTargetType !== 'updater' && !selectedTargetId)}
+			submitDisabled={isLoading || !selectedTargetId}
 			submitLoading={isLoading}
 			onSubmit={handleSubmit}
 			submitLabel={m.create_webhook()}

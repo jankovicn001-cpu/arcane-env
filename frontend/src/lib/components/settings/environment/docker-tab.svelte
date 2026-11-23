@@ -6,17 +6,11 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
 	import { m } from '#lib/paraglide/messages.js';
-	import type { UpdateCheckRegistry } from '#lib/types/settings.js';
-	import {
-		arcaneImageRegistryOptions,
-		arcaneToolsImage,
-		arcaneUpdateCheckImage,
-		arcaneUpdateCheckRegistryOptions
-	} from '#lib/utils/registry.js';
+	import { arcaneImageRegistryOptions, arcaneToolsImage } from '#lib/utils/registry.js';
 
-	import type { DockerTabProps } from './tab-props';
+	import type { FormTabProps } from './tab-props';
 
-	let { formInputs = $bindable(), environmentId, mixed }: DockerTabProps = $props();
+	let { formInputs = $bindable(), mixed }: FormTabProps = $props();
 
 	const shellOptions = [
 		{
@@ -61,8 +55,6 @@
 	];
 
 	const registryOptions = arcaneImageRegistryOptions();
-	const updateCheckRegistryOptions = arcaneUpdateCheckRegistryOptions();
-	const updateCheckImage = $derived(arcaneUpdateCheckImage(formInputs.updateCheckRegistry.value, environmentId === '0'));
 
 	const pruneContainerModes = [
 		{ value: 'none', label: m.none() },
@@ -92,10 +84,6 @@
 		{ value: 'olderThan', label: m.prune_mode_older_than() }
 	];
 </script>
-
-{#snippet updateCheckImageHelp()}
-	<span class="font-mono">{updateCheckImage}</span>
-{/snippet}
 
 <div class="space-y-8">
 	<SettingsSection title={m.environments_docker_settings_title()}>
@@ -176,28 +164,6 @@
 			{/snippet}
 			{#snippet helpText()}
 				<span class="font-mono">{arcaneToolsImage(formInputs.toolsImageRegistry.value)}</span>
-			{/snippet}
-		</SettingsRow>
-
-		<SettingsRow
-			for="updateCheckRegistry"
-			label={m.update_check_registry_label()}
-			description={m.update_check_registry_description()}
-			helpText={updateCheckImage ? updateCheckImageHelp : undefined}
-			mixed={mixed('updateCheckRegistry')}
-		>
-			{#snippet children({ describedBy })}
-				<SelectWithLabel
-					id="updateCheckRegistry"
-					name="updateCheckRegistry"
-					hideLabel
-					bind:value={formInputs.updateCheckRegistry.value}
-					label={m.update_check_registry_label()}
-					options={updateCheckRegistryOptions}
-					onValueChange={(v) => (formInputs.updateCheckRegistry.value = v as UpdateCheckRegistry)}
-					placeholder={mixed('updateCheckRegistry') ? m.mixed() : undefined}
-					aria-describedby={describedBy}
-				/>
 			{/snippet}
 		</SettingsRow>
 

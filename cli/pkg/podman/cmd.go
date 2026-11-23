@@ -26,7 +26,6 @@ func Command() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newStatusCmd(),
-		newAutoUpdateCmd(),
 		newPodsCmd(),
 		newQuadletsCmd(),
 		newKubeCmd(),
@@ -63,7 +62,6 @@ func newStatusCmd() *cobra.Command {
 					output.KeyValue("Rootless", kit.Ternary(data.Rootless, "Yes", "No"))
 					output.KeyValue("Quadlets", kit.Ternary(data.QuadletsSupported, "Supported", "Unsupported"))
 					output.KeyValue("Quadlet apps", kit.Ternary(data.QuadletAppsSupported, "Supported", "Unsupported"))
-					output.KeyValue("Auto-update mode", data.AutoUpdateMode)
 					output.KeyValue("systemd", kit.Ternary(data.SystemdAvailable, string(data.SystemdScope), "Unavailable"))
 					if data.SystemdReason != "" {
 						output.KeyValue("systemd reason", data.SystemdReason)
@@ -74,72 +72,6 @@ func newStatusCmd() *cobra.Command {
 		},
 	}
 	cmdutil.SetScope(cmdutil.ScopeRead, cmd)
-	return cmd
-}
-
-func newAutoUpdateCmd() *cobra.Command {
-	var opts struct {
-		dryRun bool
-		force  bool
-	}
-	cmd := &cobra.Command{
-		Use:          "autoupdate",
-		Aliases:      []string{"auto-update"},
-		Short:        "Run podman auto-update",
-		SilenceUsage: true,
-		Args:         cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			confirmed, confirmationErr := cmdutil.ConfirmOrCancel(cmd, cmdutil.ConfirmOptions{Label: "Are you sure you want to auto-update Podman containers?", Force: opts.force || opts.dryRun})
-			if confirmationErr != nil || !confirmed {
-				return confirmationErr
-			}
-
-			c, err := cmdutil.ClientFromCommand(cmd)
-			if err != nil {
-				return err
-			}
-
-			return cmdutil.Run(cmd, c, cmdutil.Spec[types.PodmanAutoUpdateResult]{
-				Method:         http.MethodPost,
-				Path:           internaltypes.PodmanAutoUpdate(c.EnvID()),
-				Body:           types.PodmanAutoUpdateOptions{DryRun: opts.dryRun},
-				FailureMessage: "failed to run Podman auto-update",
-				Render: func(data types.PodmanAutoUpdateResult) error {
-					output.Header("Podman Auto-Update")
-					output.KeyValue("Mode", data.Mode)
-					if data.Unit != nil {
-						output.KeyValue("Unit", data.Unit.Name)
-						output.KeyValue("State", data.Unit.ActiveState+"/"+data.Unit.SubState)
-					}
-					for _, message := range data.Errors {
-						output.Warning("%s", message)
-					}
-					if len(data.Reports) > 0 {
-						rows := make([][]string, len(data.Reports))
-						for i, report := range data.Reports {
-							rows[i] = []string{
-								report.ContainerName,
-								report.ImageName,
-								report.Policy,
-								report.SystemdUnit,
-								report.Updated,
-							}
-						}
-						if printErr := cmdutil.PrintTable(cmd, []string{"CONTAINER", "IMAGE", "POLICY", "UNIT", "UPDATED"}, rows); printErr != nil {
-							return printErr
-						}
-					}
-					if len(data.Errors) > 0 {
-						return fmt.Errorf("auto-update reported %d error(s)", len(data.Errors))
-					}
-					return nil
-				},
-			})
-		},
-	}
-	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "Report pending updates without applying them")
-	cmd.Flags().BoolVarP(&opts.force, "force", "f", false, "Skip the confirmation prompt")
-	cmdutil.SetScope(cmdutil.ScopeAll, cmd)
 	return cmd
 }
 

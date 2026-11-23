@@ -83,17 +83,6 @@ type (
 		ShouldSchedule(ctx context.Context) bool
 	}
 
-	BusWatcher interface {
-		Name() string
-		Start(ctx context.Context) error
-		RunNow(ctx context.Context) error
-	}
-
-	StoppableBusWatcher interface {
-		BusWatcher
-		Stop(ctx context.Context) error
-	}
-
 	DynamicScheduler interface {
 		Submit(ctx context.Context, request SchedulerRequest) (SchedulerRun, error)
 		AddJob(ctx context.Context, job SchedulerJob) error
@@ -105,22 +94,14 @@ type (
 		GetJob(jobID string) (SchedulerJob, bool)
 		GetJobRuntimeState(jobID string) (JobRuntimeState, bool)
 		AddJob(ctx context.Context, job SchedulerJob) error
-		RunBusWatcherNow(ctx context.Context, watcherID string) error
-	}
-
-	WorkerController interface {
-		RestartWatcher(ctx context.Context, watcherID string) error
-		WatcherHealth(watcherID string) (SchedulerWorkerHealth, bool)
 	}
 
 	JobScheduler interface {
 		ListRegisteredJobs() []SchedulerJob
-		WorkerController
 		DynamicScheduler
 		JobController
 
 		RegisterJob(job SchedulerJob) error
-		RegisterBusWatcher(watcher BusWatcher, canRunManually bool) error
 		StartScheduler(ctx context.Context) error
 		GetLocation() *time.Location
 		Stop(ctx context.Context) error

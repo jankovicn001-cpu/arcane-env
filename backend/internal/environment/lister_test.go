@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"kit.getarcane.app"
+
+	"getarcane.dev/arcane/v3/internal/database"
+	"getarcane.dev/arcane/v3/internal/environment/children/group"
 	"getarcane.dev/arcane/v3/pkg/agent"
 	"getarcane.dev/arcane/v3/pkg/pagination"
 	"getarcane.dev/types/v3"
@@ -173,4 +178,48 @@ func newTestWebSocketTunnel(t *testing.T, envID string) (*agent.AgentTunnel, fun
 		_ = clientConn.CloseNow()
 		server.Close()
 	}
+}
+
+func TestLister_ListEnvironmentsPaginated_Groups(t *testing.T) {
+	tunnels := agent.NewTunnelRegistry()
+	ctx := t.Context()
+	db := setupEnvironmentServiceTestDB(t)
+	lister := NewLister(db, tunnels)
+
+	require.NoError(t, db.Create([]group.Group{
+		{BaseModel: database.BaseModel{ID: "g-prod"}, Name: "prod", Description: "Production"},
+		{BaseModel: database.BaseModel{ID: "g-dev"}, Name: "Dev"},
+	}).Error)
+	createNamedTestEnvironment(t, db, "env-web", "web", "agent://web", nil)
+	createNamedTestEnvironment(t, db, "env-api", "api", "agent://api", nil)
+	createNamedTestEnvironment(t, db, "env-box", "box", "agent://box", nil)
+	createNamedTestEnvironment(t, db, "env-loose", "loose", "agent://loose", nil)
+	for id, groupID := range map[string]string{"env-web": "g-prod", "env-api": "g-prod", "env-box": "g-dev"} {
+		require.NoError(t, db.WithContext(ctx).Model(&Environment{}).Where("id = ?", id).Update("group_id", groupID).Error)
+	}
+	list := func(params pagination.QueryParams) []types.Environment {
+		t.Helper()
+		params.Limit = -1
+		envs, _, err := lister.ListEnvironmentsPaginated(ctx, params, nil)
+		require.NoError(t, err)
+		return envs
+	}
+
+	sorted := list(pagination.QueryParams{Sort: "group"})
+	assert.Equal(t, []string{"env-loose", "env-box", "env-api", "env-web"}, environmentIDs(sorted), "sorts by group name, then agent name")
+	assert.Equal(t, &types.EnvironmentGroupRef{ID: "g-prod", Name: "prod", Description: "Production"}, sorted[2].Group)
+	assert.Equal(t, "g-prod", sorted[2].GroupID)
+	assert.Nil(t, sorted[0].Group)
+
+	byName := list(pagination.QueryParams{Sort: "name"})
+	assert.Equal(t, "Dev", kit.FromPtr(byName[slices.IndexFunc(byName, func(env types.Environment) bool { return env.ID == "env-box" })].Group).Name,
+		"the database path embeds the group too")
+
+	assert.ElementsMatch(t, []string{"env-web", "env-api"}, environmentIDs(list(pagination.QueryParams{Filters: map[string]string{"groupId": "g-prod"}})))
+	assert.ElementsMatch(t, []string{"env-loose"}, environmentIDs(list(pagination.QueryParams{Filters: map[string]string{"groupId": "none"}})))
+	assert.ElementsMatch(t, []string{"env-box", "env-loose"}, environmentIDs(list(pagination.QueryParams{Filters: map[string]string{"groupId": "g-dev, none"}})))
+	assert.Empty(t, list(pagination.QueryParams{Filters: map[string]string{"groupId": "missing"}}))
+
+	assert.ElementsMatch(t, []string{"env-web", "env-api"}, environmentIDs(list(pagination.QueryParams{Search: "prod"})), "search matches group names")
+	assert.ElementsMatch(t, []string{"env-box"}, environmentIDs(list(pagination.QueryParams{Search: "dev", Sort: "group"})))
 }

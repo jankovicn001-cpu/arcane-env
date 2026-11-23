@@ -144,8 +144,6 @@ const (
 	NotificationProviderMatrix          NotificationProvider  = "matrix"
 	NotificationProviderGoogleChat      NotificationProvider  = "googlechat"
 	NotificationProviderGeneric         NotificationProvider  = "generic"
-	NotificationEventImageUpdate        NotificationEventType = "image_update"
-	NotificationEventContainerUpdate    NotificationEventType = "container_update"
 	NotificationEventVulnerabilityFound NotificationEventType = "vulnerability_found"
 	NotificationEventPruneReport        NotificationEventType = "prune_report"
 	NotificationEventAutoHeal           NotificationEventType = "auto_heal"
@@ -175,8 +173,6 @@ var (
 	}
 
 	AllNotificationEventTypes = []NotificationEventType{
-		NotificationEventImageUpdate,
-		NotificationEventContainerUpdate,
 		NotificationEventVulnerabilityFound,
 		NotificationEventPruneReport,
 		NotificationEventAutoHeal,

@@ -159,7 +159,7 @@ func (s *ActivityService) StartActivity(ctx context.Context, req StartActivityRe
 		ID:                   req.ID,
 		EnvironmentID:        environmentID,
 		BatchID:              copyPtr(kit.Ternary(req.BatchID != nil, req.BatchID, mo.EmptyableToOption(activitylib.ActivityBatchIDFromContext(ctx)).ToPointer())),
-		Type:                 cmp.Or(req.Type, types.ActivityTypeAutoUpdate),
+		Type:                 cmp.Or(req.Type, types.ActivityTypeResourceAction),
 		Status:               status,
 		ResourceType:         copyPtr(req.ResourceType),
 		ResourceID:           copyPtr(req.ResourceID),
@@ -593,16 +593,6 @@ func (s *ActivityService) CancelActivity(ctx context.Context, environmentID, act
 	return &dto, nil
 }
 
-func (s *ActivityService) FailStaleImageUpdateChecks(ctx context.Context) (int64, error) {
-	return s.finalizeSwept(ctx, "stale image update check",
-		func() ([]sweeps.Candidate, error) { return s.sweeps.StaleImageUpdateChecks(ctx) },
-		func(sweeps.Candidate) (types.ActivityStatus, string) {
-			return types.ActivityStatusFailed, "Image update check failed because it was stale after Arcane restarted"
-		},
-		"Image update check failed",
-	)
-}
-
 func (s *ActivityService) finalizeSwept(
 	ctx context.Context,
 	label string,
@@ -722,18 +712,6 @@ func (s *ActivityService) PatchActivityMetadata(ctx context.Context, activityID 
 		}
 		return nil
 	})
-}
-
-func (s *ActivityService) ResolveStaleAutoUpdateActivities(ctx context.Context, protectedIDs ...string) (int64, error) {
-	return s.finalizeSwept(ctx, "stale auto-update",
-		func() ([]sweeps.Candidate, error) { return s.sweeps.StaleAutoUpdates(ctx, protectedIDs) },
-		func(candidate sweeps.Candidate) (types.ActivityStatus, string) {
-			if selfUpdate, _ := candidate.Metadata["selfUpdateTriggered"].(bool); selfUpdate {
-				return types.ActivityStatusSuccess, "Auto-update completed — Arcane restarted with the updated image"
-			}
-			return types.ActivityStatusFailed, "Auto-update interrupted by Arcane restart"
-		},
-	)
 }
 
 func completeActivityUpdates(startedAt time.Time, status types.ActivityStatus, finalMessage string, errMessage *string, finalStep []string, now time.Time) map[string]any {

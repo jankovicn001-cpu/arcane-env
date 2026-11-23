@@ -656,14 +656,14 @@ func (s *UserService) grantDefaultAdminRole(ctx context.Context, adminUserID str
 		return fmt.Errorf("failed to list default admin assignments: %w", err)
 	}
 	for _, a := range assignments {
-		if a.RoleID == authz.BuiltInRoleAdmin && a.EnvironmentID == nil {
+		if a.RoleID == authz.BuiltInRoleAdmin && a.EnvironmentID == nil && a.EnvironmentGroupID == nil {
 			return nil
 		}
 	}
 	manual := make([]role.UserRoleAssignment, 0, len(assignments)+1)
 	for _, a := range assignments {
 		if a.Source == role.RoleAssignmentSourceManual {
-			manual = append(manual, role.UserRoleAssignment{RoleID: a.RoleID, EnvironmentID: a.EnvironmentID})
+			manual = append(manual, role.UserRoleAssignment{RoleID: a.RoleID, EnvironmentID: a.EnvironmentID, EnvironmentGroupID: a.EnvironmentGroupID})
 		}
 	}
 	manual = append(manual, role.UserRoleAssignment{
@@ -753,9 +753,12 @@ func (s *UserService) toUserResponseDtos(ctx context.Context, users []User) []ty
 	}
 	if total, err := s.roleService.CountGlobalAdmins(ctx, s.db.DB, ""); err == nil && total == 1 {
 		for i := range result {
-			if result[i].IsGlobalAdmin {
-				result[i].CanDelete = false
+			if !result[i].IsGlobalAdmin {
+				continue
 			}
+			// Admin through a user group never counts toward the guard, so only the sole direct admin is protected.
+			remaining, countErr := s.roleService.CountGlobalAdmins(ctx, s.db.DB, result[i].ID)
+			result[i].CanDelete = countErr == nil && remaining > 0
 		}
 	}
 	return result
@@ -779,6 +782,7 @@ func (s *UserService) toUserResponseDto(ctx context.Context, u User) types.User 
 		CreatedAt:              u.CreatedAt.Format("2006-01-02T15:04:05.999999Z"),
 		UpdatedAt:              u.UpdatedAt.Format("2006-01-02T15:04:05.999999Z"),
 		RoleAssignments:        []types.RoleAssignmentSummary{},
+		UserGroups:             []types.UserGroupRef{},
 		PermissionsByEnv:       map[string][]string{},
 	}
 	if u.LastLogin != nil {
@@ -797,11 +801,15 @@ func (s *UserService) toUserResponseDto(ctx context.Context, u User) types.User 
 		dto.RoleAssignments = make([]types.RoleAssignmentSummary, len(rows))
 		for i, r := range rows {
 			dto.RoleAssignments[i] = types.RoleAssignmentSummary{
-				RoleID:        r.RoleID,
-				EnvironmentID: r.EnvironmentID,
-				Source:        r.Source,
+				RoleID:             r.RoleID,
+				EnvironmentID:      r.EnvironmentID,
+				EnvironmentGroupID: r.EnvironmentGroupID,
+				Source:             r.Source,
 			}
 		}
+	}
+	if refs, err := s.roleService.UserGroupRefs(ctx, u.ID); err == nil {
+		dto.UserGroups = refs
 	}
 	if ps, err := s.roleService.ResolvePermissions(ctx, u.ID); err == nil && ps != nil {
 		dto.IsGlobalAdmin = ps.IsGlobalAdmin()

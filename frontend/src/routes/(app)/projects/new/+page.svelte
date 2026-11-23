@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto, refreshAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
 
@@ -68,7 +69,7 @@
 
 	let { data } = $props();
 
-	let pickedEnvironmentId = $state('');
+	let pickedEnvironmentId = $state(page.url.searchParams.get('env') ?? '');
 	let pickedDirectory = $state('');
 	// Converted containers default the destination to their environment.
 	const environmentId = $derived(destinationEnvironmentId(pickedEnvironmentId || data.sourceEnvironmentId, 'projects:create'));

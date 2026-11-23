@@ -53,7 +53,7 @@ func TestResolveSystemUpgraderRuntimeOptions_TCPDockerHost(t *testing.T) {
 		},
 	}
 
-	containerEnv, mounts, networkMode, err := resolveUpgraderRuntimeOptions(
+	containerEnv, mounts, networkMode, err := resolveHelperRuntimeOptions(
 		t.Context(),
 		"tcp://docker-socket-proxy:2375",
 		currentContainer,
@@ -68,7 +68,7 @@ func TestResolveSystemUpgraderRuntimeOptions_TCPDockerHost(t *testing.T) {
 }
 
 func TestResolveSystemUpgraderRuntimeOptions_UnixDockerHost(t *testing.T) {
-	containerEnv, mounts, networkMode, err := resolveUpgraderRuntimeOptions(
+	containerEnv, mounts, networkMode, err := resolveHelperRuntimeOptions(
 		t.Context(),
 		"unix:///var/run/docker.sock",
 		nil,
@@ -91,7 +91,7 @@ func TestResolveSystemUpgraderRuntimeOptions_UnixDockerHost(t *testing.T) {
 }
 
 func TestResolveSystemUpgraderRuntimeOptions_DefaultDockerHost(t *testing.T) {
-	containerEnv, mounts, _, err := resolveUpgraderRuntimeOptions(
+	containerEnv, mounts, _, err := resolveHelperRuntimeOptions(
 		t.Context(),
 		"",
 		nil,
@@ -113,7 +113,7 @@ func TestResolveSystemUpgraderRuntimeOptions_DefaultDockerHost(t *testing.T) {
 }
 
 func TestResolveSystemUpgraderRuntimeOptions_UnixDockerHostResolutionError(t *testing.T) {
-	_, _, _, err := resolveUpgraderRuntimeOptions(
+	_, _, _, err := resolveHelperRuntimeOptions(
 		t.Context(),
 		"unix:///var/run/docker.sock",
 		nil,

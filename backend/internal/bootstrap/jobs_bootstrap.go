@@ -43,11 +43,8 @@ type (
 		System      *system.SystemService
 		Apns        *apns.ApnsService
 
-		AutoUpdate             *flow.Job `name:"auto-update"`
-		ImageUpdateWatcher     *scheduler.ImageUpdateWatcher
 		DockerClientRefresh    *scheduler.DockerClientRefreshJob
 		Analytics              *scheduler.AnalyticsJob
-		UpgradeLogCleanup      types.SchedulerJob `name:"upgrade-log-cleanup"`
 		EventCleanup           *scheduler.EventCleanupJob
 		PruningVolumeHelper    *scheduler.PruningVolumeHelperJob
 		ExpiredSessionsCleanup *scheduler.ExpiredSessionsCleanupJob
@@ -77,18 +74,17 @@ type (
 	startJobSchedulerParams struct {
 		fx.In
 
-		Lifecycle          fx.Lifecycle
-		AppCtx             context.Context
-		Config             *config.Config
-		Scheduler          types.JobScheduler
-		Coordinator        *runs.Coordinator
-		Workflows          *flow.Engine
-		ImageUpdateWatcher *scheduler.ImageUpdateWatcher
-		Analytics          *scheduler.AnalyticsJob
-		JobSchedule        *job.JobService
-		Volume             *volume.VolumeService
-		System             *system.SystemService
-		GitOpsSync         *gitops.GitOpsSyncService
+		Lifecycle   fx.Lifecycle
+		AppCtx      context.Context
+		Config      *config.Config
+		Scheduler   types.JobScheduler
+		Coordinator *runs.Coordinator
+		Workflows   *flow.Engine
+		Analytics   *scheduler.AnalyticsJob
+		JobSchedule *job.JobService
+		Volume      *volume.VolumeService
+		System      *system.SystemService
+		GitOpsSync  *gitops.GitOpsSyncService
 	}
 
 	settingsSubscriptionsParams struct {
@@ -99,17 +95,15 @@ type (
 		Settings     settingsChangeSubscriber
 		JobSchedule  *job.JobService
 
-		AutoUpdate         *flow.Job
-		ImageUpdateWatcher *scheduler.ImageUpdateWatcher
-		FilesystemWatcher  *scheduler.FilesystemWatcherJob
-		ScheduledPrune     *scheduler.ScheduledPruneJob
-		VulnerabilityScan  *flow.Job
-		VulnerabilityRisk  *scheduler.VulnerabilityRiskJob
-		AutoPatch          *flow.Job
-		AutoHeal           *scheduler.AutoHealJob
-		Apns               *apns.ApnsService
-		ApnsOutbox         *scheduler.ApnsOutboxJob
-		LdapSync           *scheduler.LdapSyncJob
+		FilesystemWatcher *scheduler.FilesystemWatcherJob
+		ScheduledPrune    *scheduler.ScheduledPruneJob
+		VulnerabilityScan *flow.Job
+		VulnerabilityRisk *scheduler.VulnerabilityRiskJob
+		AutoPatch         *flow.Job
+		AutoHeal          *scheduler.AutoHealJob
+		Apns              *apns.ApnsService
+		ApnsOutbox        *scheduler.ApnsOutboxJob
+		LdapSync          *scheduler.LdapSyncJob
 	}
 
 	settingsChangeSubscriber interface {
@@ -123,7 +117,6 @@ type (
 
 func startJobScheduler(p startJobSchedulerParams) {
 	schedulerCtx, cancelScheduler := context.WithCancel(p.AppCtx)
-	var resumeDone chan struct{}
 	p.Lifecycle.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			started := false
@@ -141,9 +134,6 @@ func startJobScheduler(p startJobSchedulerParams) {
 			}
 			p.GitOpsSync.RegisterAutoSyncJobsOnStartup(ctx)
 			p.GitOpsSync.SubscribeProjectFileChanges()
-			if registerBusWatcherErr := p.Scheduler.RegisterBusWatcher(p.ImageUpdateWatcher, true); registerBusWatcherErr != nil {
-				return registerBusWatcherErr
-			}
 			if startSchedulerErr := p.Scheduler.StartScheduler(ctx); startSchedulerErr != nil {
 				return fmt.Errorf("start scheduler: %w", startSchedulerErr)
 			}
@@ -151,18 +141,7 @@ func startJobScheduler(p startJobSchedulerParams) {
 			if _, submitErr := p.Coordinator.Submit(ctx, types.SchedulerRequest{JobID: p.Analytics.Name(), EnvironmentID: "0", Trigger: "startup"}); submitErr != nil {
 				slog.WarnContext(ctx, "Failed to submit startup job", "job", p.Analytics.Name(), "error", submitErr)
 			}
-			// Standalone tasks wait until upgrade job recovery has read its job, so a resumed step's new checkpoint
-			// is never mistaken for one the previous process left.
-			if !p.Config.AgentEnabled {
-				resumeDone = make(chan struct{})
-				go func() {
-					defer close(resumeDone)
-					p.System.ResumeUpgradeJobOnStartup(schedulerCtx)
-					p.Workflows.Ready()
-				}()
-			} else {
-				p.Workflows.Ready()
-			}
+			p.Workflows.Ready()
 			if startupCancellationErr := ctx.Err(); startupCancellationErr != nil {
 				return fmt.Errorf("complete scheduler startup: %w", startupCancellationErr)
 			}
@@ -171,18 +150,7 @@ func startJobScheduler(p startJobSchedulerParams) {
 		},
 		OnStop: func(ctx context.Context) error {
 			cancelScheduler()
-			resumeErr := func() error {
-				if resumeDone == nil {
-					return nil
-				}
-				select {
-				case <-resumeDone:
-					return nil
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			}()
-			if stopErr := errors.Join(resumeErr, p.Coordinator.Stop(ctx), p.Scheduler.Stop(ctx)); stopErr != nil {
+			if stopErr := errors.Join(p.Coordinator.Stop(ctx), p.Scheduler.Stop(ctx)); stopErr != nil {
 				slog.ErrorContext(ctx, "Job scheduler exited with error", "error", stopErr)
 				return stopErr
 			}
@@ -242,7 +210,6 @@ func reconcileCoordinatorStartup(ctx context.Context, p startJobSchedulerParams)
 
 func registerJobs(params registerJobsParams) error {
 	jobs := []types.SchedulerJob{
-		params.AutoUpdate,
 		params.DockerClientRefresh,
 		params.Analytics,
 		params.EventCleanup,
@@ -256,7 +223,6 @@ func registerJobs(params registerJobsParams) error {
 		params.UploadSessionsCleanup,
 		params.GitCloneCleanup,
 		params.BackupRepositoryPrune,
-		params.UpgradeLogCleanup,
 	}
 	if !params.Config.AgentEnabled {
 		jobs = append(jobs, params.ExpiredSessionsCleanup, params.ApnsOutbox, params.LdapSync)
@@ -277,23 +243,21 @@ func registerJobs(params registerJobsParams) error {
 	})
 
 	if err := setupSettingsSubscriptions(settingsSubscriptionsParams{
-		Lifecycle:          params.Lifecycle,
-		LifecycleCtx:       params.AppCtx,
-		Config:             params.Config,
-		Scheduler:          params.Scheduler,
-		Settings:           params.Settings,
-		JobSchedule:        params.JobSchedule,
-		AutoUpdate:         params.AutoUpdate,
-		ImageUpdateWatcher: params.ImageUpdateWatcher,
-		FilesystemWatcher:  params.FilesystemWatcher,
-		ScheduledPrune:     params.ScheduledPrune,
-		VulnerabilityScan:  params.VulnerabilityScan,
-		VulnerabilityRisk:  params.VulnerabilityRisk,
-		AutoPatch:          params.AutoPatch,
-		AutoHeal:           params.AutoHeal,
-		Apns:               params.Apns,
-		ApnsOutbox:         params.ApnsOutbox,
-		LdapSync:           params.LdapSync,
+		Lifecycle:         params.Lifecycle,
+		LifecycleCtx:      params.AppCtx,
+		Config:            params.Config,
+		Scheduler:         params.Scheduler,
+		Settings:          params.Settings,
+		JobSchedule:       params.JobSchedule,
+		FilesystemWatcher: params.FilesystemWatcher,
+		ScheduledPrune:    params.ScheduledPrune,
+		VulnerabilityScan: params.VulnerabilityScan,
+		VulnerabilityRisk: params.VulnerabilityRisk,
+		AutoPatch:         params.AutoPatch,
+		AutoHeal:          params.AutoHeal,
+		Apns:              params.Apns,
+		ApnsOutbox:        params.ApnsOutbox,
+		LdapSync:          params.LdapSync,
 	}); err != nil {
 		return err
 	}
@@ -329,14 +293,6 @@ func setupSettingsSubscriptions(params settingsSubscriptionsParams) error {
 			}
 		})
 	}
-	subscribe([]string{"pollingEnabled", "pollingInterval"}, func(_ []types.SettingUpdate) {
-		params.ImageUpdateWatcher.RefreshSchedule()
-		params.ImageUpdateWatcher.Trigger()
-		if err := params.Scheduler.AddJob(params.LifecycleCtx, params.AutoUpdate); err != nil {
-			slog.WarnContext(params.LifecycleCtx, "Failed to reschedule auto-update job", "error", err)
-		}
-	})
-
 	if !params.Config.AgentEnabled {
 		subscribe([]string{"apnsEnabled"}, func(updates []types.SettingUpdate) {
 			params.Apns.ApplyEnabledUpdates(params.LifecycleCtx, updates, func() error {
@@ -345,8 +301,6 @@ func setupSettingsSubscriptions(params settingsSubscriptionsParams) error {
 		})
 		rescheduleOn([]string{"ldapEnabled", "ldapSyncInterval"}, params.LdapSync)
 	}
-
-	rescheduleOn([]string{"autoUpdate", "autoUpdateInterval"}, params.AutoUpdate)
 
 	subscribe([]string{"dockerClientRefreshInterval", "environmentHealthInterval"}, func(updates []types.SettingUpdate) {
 		changedKeys := make([]string, 0, len(updates))

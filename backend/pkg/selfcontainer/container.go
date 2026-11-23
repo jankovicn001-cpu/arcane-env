@@ -18,10 +18,8 @@ import (
 )
 
 const (
-	UpgradeLogDirectory   = "/app/data"
 	InternalResourceLabel = "com.getarcaneapp.internal.resource"
 	HiddenResourceLabel   = "com.getarcaneapp.arcane.hidden"
-	LabelArcaneUpgrader   = "com.getarcaneapp.arcane.upgrader"
 )
 
 func FindArcaneContainerIDByLabel(ctx context.Context, dockerClient *client.Client) string {
@@ -36,9 +34,6 @@ func FindArcaneContainerIDByLabel(ctx context.Context, dockerClient *client.Clie
 
 	var fallbackID string
 	for _, c := range list.Items {
-		if v, ok := c.Labels[LabelArcaneUpgrader]; ok && strings.EqualFold(strings.TrimSpace(v), "true") {
-			continue
-		}
 		if c.State == container.StateRunning {
 			return c.ID
 		}

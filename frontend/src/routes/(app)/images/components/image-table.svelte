@@ -14,7 +14,6 @@
 	import RowActionsMenu from '#lib/components/arcane-table/row-actions-menu.svelte';
 	import { HardenedImageBadge } from '#lib/components/badges/index.js';
 	import { openConfirmDialog } from '#lib/components/confirm-dialog/index.js';
-	import ImageUpdateItem from '#lib/components/image-update-item.svelte';
 	import { EmptyState } from '#lib/components/states/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
@@ -39,7 +38,7 @@
 	import { SessionCancelledError } from '#lib/services/api-service.js';
 	import { imageService } from '#lib/services/image-service.js';
 	import { vulnerabilityService } from '#lib/services/vulnerability-service.js';
-	import { environmentStore } from '#lib/stores/environment.store.svelte.js';
+	import { environmentStore, type EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
 	import { featureStore } from '#lib/stores/features.store.svelte.js';
 	import type { ImageListResponse, ImageSummary } from '#lib/types/image.js';
 	import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
@@ -57,7 +56,6 @@
 	} from '#lib/utils/environments.js';
 	import { bytes, formatDate, formatDateTimeShort } from '#lib/utils/formatting.js';
 	import { hardenedImageDisplay, hardenedSupportSummary } from '#lib/utils/hardened-images.js';
-	import { blockedUpdateTitle } from '#lib/utils/image-updates.js';
 	import { inUseBadge } from '#lib/utils/mobile-card-badges.js';
 	import { tryCatch } from '#lib/utils/try-catch.js';
 
@@ -67,12 +65,17 @@
 
 	let {
 		images,
+		environments,
+		persistKey = 'arcane-image-table',
 		selectedIds = $bindable(),
 		requestOptions = $bindable(),
 		onRetry,
 		refreshError
 	}: {
 		images: EnvironmentPage<ImageListResponse>;
+		/** Environments the table covers; defaults to every shown environment. */
+		environments?: EnvironmentRef[];
+		persistKey?: string;
 		selectedIds: string[];
 		requestOptions: SearchPaginationSortRequest;
 		onRetry: () => Promise<unknown>;
@@ -87,20 +90,25 @@
 		checking: false
 	});
 
+	const tableEnvironments = $derived(environments ?? environmentStore.shown);
+	const environmentsKey = $derived(tableEnvironments.map((env) => env.id).join(','));
+	// A table pinned to one environment needs no environment column or facet.
+	const showEnvironmentColumn = $derived(environments === undefined || environments.length > 1);
+
 	const vulnerabilityManagementEnabled = $derived(
-		environmentStore.shown.some((env) => featureStore.isEnabled('vulnerabilityManagement', env.id))
+		tableEnvironments.some((env) => featureStore.isEnabled('vulnerabilityManagement', env.id))
 	);
-	const canDeleteImage = $derived(hasShownPermission('images:delete'));
-	const canPullImage = $derived(hasShownPermission('images:pull'));
-	const canScanImage = $derived(vulnerabilityManagementEnabled && hasShownPermission('vulnerabilities:scan'));
-	const canTagImage = $derived(hasShownPermission('images:tag'));
-	const canPatchImage = $derived(hasShownPermission('images:patch'));
-	const canReadImage = $derived(hasShownPermission('images:read'));
+	const canDeleteImage = $derived(hasShownPermission('images:delete', tableEnvironments));
+	const canPullImage = $derived(hasShownPermission('images:pull', tableEnvironments));
+	const canScanImage = $derived(vulnerabilityManagementEnabled && hasShownPermission('vulnerabilities:scan', tableEnvironments));
+	const canTagImage = $derived(hasShownPermission('images:tag', tableEnvironments));
+	const canPatchImage = $derived(hasShownPermission('images:patch', tableEnvironments));
+	const canReadImage = $derived(hasShownPermission('images:read', tableEnvironments));
 
 	let tagDialogImage = $state<ImageRow | null>(null);
 
 	function invalidateImages() {
-		return queryClient.invalidateQueries({ queryKey: queryKeys.images.listPrefix(environmentStore.shownKey) });
+		return queryClient.invalidateQueries({ queryKey: queryKeys.images.listPrefix(environmentsKey) });
 	}
 
 	function handleDeleteSelected(ids: string[]) {
@@ -281,7 +289,7 @@
 	}
 
 	const allColumns = $derived([
-		...environmentColumns<ImageRow>(),
+		...(showEnvironmentColumn ? environmentColumns<ImageRow>() : []),
 		{ accessorKey: 'id', title: m.common_id(), hidden: true },
 		{ accessorKey: 'repo', title: m.resource_repository_cap(), sortable: true, cell: RepoCell },
 		{
@@ -291,20 +299,6 @@
 			cell: StatusCell
 		},
 		{ accessorKey: 'size', title: m.common_size(), sortable: true, cell: SizeCell, align: 'right' },
-		{
-			id: 'updates',
-			accessorFn: (row) => {
-				if (!row.repoDigests || row.repoDigests.length === 0) return 'local';
-				if (row.updateInfo?.hasUpdate) return 'has_update';
-				if (row.updateInfo?.updateType === 'local') return 'local';
-				if (row.updateInfo?.error) return 'error';
-				if (row.updateInfo) return 'up_to_date';
-				return 'unknown';
-			},
-			title: m.updates(),
-			class: 'min-w-table-update',
-			cell: UpdatesCell
-		},
 		{ accessorKey: 'repoTags', title: m.common_tags(), cell: TagCell },
 		{
 			id: 'vulnerabilities',
@@ -351,7 +345,6 @@
 		{ id: 'repoTags', label: m.common_tags(), defaultVisible: true },
 		{ id: 'inUse', label: m.common_status(), defaultVisible: true },
 		{ id: 'usedBy', label: m.images_used_by(), defaultVisible: false },
-		{ id: 'updates', label: m.updates(), defaultVisible: false },
 		{ id: 'vulnerabilities', label: m.vuln_title(), defaultVisible: false },
 		{ id: 'hardened', label: m.docker_hardened_image(), defaultVisible: true },
 		{ id: 'size', label: m.common_size(), defaultVisible: true },
@@ -519,20 +512,6 @@
 	{/if}
 {/snippet}
 
-{#snippet UpdatesCell({ item }: { item: ImageRow })}
-	<div class="flex min-w-table-update items-center">
-		<ImageUpdateItem
-			updateInfo={item.updateInfo}
-			imageId={item.id}
-			environmentId={item.environmentId}
-			repo={item.repo}
-			tag={item.tag}
-			isLocal={!item.repoDigests || item.repoDigests.length === 0}
-			onUpdated={invalidateImages}
-		/>
-	</div>
-{/snippet}
-
 {#snippet VulnerabilitiesCell({ item }: { item: ImageRow })}
 	<!-- The column shows when any environment scans; each row needs its own environment to. -->
 	{#if featureStore.isEnabled('vulnerabilityManagement', item.environmentId)}
@@ -591,18 +570,6 @@
 				if (!(mobileFieldVisibility['hardened'] ?? true) || !item.hardened) return null;
 				const display = hardenedImageDisplay(item.hardened);
 				return { variant: display.variant, text: display.label };
-			},
-			(item: ImageRow) => {
-				if (!(mobileFieldVisibility['updates'] ?? false)) return null;
-				if (!item.repoDigests || item.repoDigests.length === 0) {
-					return { variant: 'gray' as const, text: m.image_update_local_title() };
-				}
-				if (blockedUpdateTitle(item.updateInfo)) return { variant: 'amber' as const, text: m.blocked() };
-				if (item.updateInfo?.hasUpdate) return { variant: 'blue' as const, text: m.images_has_updates() };
-				if (item.updateInfo?.updateType === 'local') return { variant: 'gray' as const, text: m.image_update_local_title() };
-				if (item.updateInfo?.error) return { variant: 'red' as const, text: m.common_error() };
-				if (item.updateInfo) return { variant: 'green' as const, text: m.images_no_updates() };
-				return { variant: 'gray' as const, text: m.common_unknown() };
 			}
 		]}
 		fields={[
@@ -716,7 +683,7 @@
 {/snippet}
 
 <ArcaneTable
-	persistKey="arcane-image-table"
+	{persistKey}
 	items={images}
 	bind:requestOptions
 	bind:selectedIds={() => selectedIds, setSelectedIds}

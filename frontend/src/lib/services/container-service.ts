@@ -1,4 +1,3 @@
-import type { Activity } from '#lib/types/activity.js';
 import type { MessageResponse } from '#lib/types/base.js';
 import type {
 	ContainerPaginatedResponse,
@@ -106,14 +105,6 @@ class ContainerService extends BaseAPIService {
 		return this.handleResponse(this.api.delete(`/agents/${opts.environmentId}/containers/${containerId}`, { params }));
 	}
 
-	updateContainer(containerId: string, environmentId: string): Promise<Activity> {
-		return this.handleResponse<Activity>(
-			this.api.post(`/agents/${environmentId}/containers/${containerId}/update`, undefined, {
-				params: { async: 'true' }
-			})
-		).then((activity) => ({ ...activity, sourceEnvironmentId: environmentId }));
-	}
-
 	async redeployContainer(containerId: string, environmentId: string): Promise<ContainerDetails> {
 		return this.handleResponse(this.api.post(`/agents/${environmentId}/containers/${containerId}/redeploy`));
 	}
@@ -128,14 +119,6 @@ class ContainerService extends BaseAPIService {
 
 	async editContainer(containerId: string, request: ContainerEdit, environmentId: string): Promise<ContainerDetails> {
 		return this.handleResponse(this.api.put(`/agents/${environmentId}/containers/${containerId}/config`, request));
-	}
-
-	async setAutoUpdate(
-		containerId: string,
-		enabled: boolean,
-		environmentId: string
-	): Promise<{ success: boolean; data: { message: string } }> {
-		return this.handleResponse(this.api.put(`/agents/${environmentId}/containers/${containerId}/autoupdate`, { enabled }));
 	}
 
 	async downloadContainerLogs(containerId: string, environmentId: string): Promise<void> {

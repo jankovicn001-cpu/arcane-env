@@ -95,12 +95,6 @@ const (
 )
 
 var overrideDocRules = map[string]overrideDocRule{
-	"autoUpdateInterval": {
-		requires: "ARCANE_AUTO_UPDATE=true to have effect at runtime.",
-	},
-	"autoUpdateDelay": {
-		requires: "ARCANE_AUTO_UPDATE=true to have effect at runtime.",
-	},
 	"scheduledPruneInterval": {
 		requires: "ARCANE_SCHEDULED_PRUNE_ENABLED=true to have effect at runtime.",
 	},
@@ -142,21 +136,6 @@ var overrideDocRules = map[string]overrideDocRule{
 	},
 	"vulnerabilityThreatIntelEnabled": {
 		requires: "ARCANE_FEATURE_VULNERABILITY_MANAGEMENT_ENABLED=true to have effect at runtime.",
-	},
-	"vulnerabilityUpdateGateEnabled": {
-		requires: "ARCANE_FEATURE_VULNERABILITY_MANAGEMENT_ENABLED=true to have effect at runtime.",
-	},
-	"vulnerabilityUpdateGateMaxCritical": {
-		requires: "ARCANE_FEATURE_VULNERABILITY_MANAGEMENT_ENABLED=true and ARCANE_VULNERABILITY_UPDATE_GATE_ENABLED=true to have effect at runtime.",
-	},
-	"vulnerabilityUpdateGateMaxHigh": {
-		requires: "ARCANE_FEATURE_VULNERABILITY_MANAGEMENT_ENABLED=true and ARCANE_VULNERABILITY_UPDATE_GATE_ENABLED=true to have effect at runtime.",
-	},
-	"vulnerabilityUpdateGateMaxMedium": {
-		requires: "ARCANE_FEATURE_VULNERABILITY_MANAGEMENT_ENABLED=true and ARCANE_VULNERABILITY_UPDATE_GATE_ENABLED=true to have effect at runtime.",
-	},
-	"vulnerabilityUpdateGateMaxLow": {
-		requires: "ARCANE_FEATURE_VULNERABILITY_MANAGEMENT_ENABLED=true and ARCANE_VULNERABILITY_UPDATE_GATE_ENABLED=true to have effect at runtime.",
 	},
 	"autoHealInterval": {
 		requires: "ARCANE_AUTO_HEAL_ENABLED=true to have effect at runtime.",

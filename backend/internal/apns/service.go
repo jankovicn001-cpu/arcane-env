@@ -344,8 +344,6 @@ func (s *ApnsService) RegisterDevice(ctx context.Context, userID string, req typ
 	if events == nil {
 		events = map[string]bool{}
 		for _, t := range []notifications.NotificationEventType{
-			notifications.NotificationEventImageUpdate,
-			notifications.NotificationEventContainerUpdate,
 			notifications.NotificationEventVulnerabilityFound,
 			notifications.NotificationEventPruneReport,
 			notifications.NotificationEventAutoHeal,
@@ -476,28 +474,9 @@ func (s *ApnsService) Enqueue(ctx context.Context, environmentID, environmentNam
 		return false, err
 	}
 
-	batchCount := 0
-	if batch, _ := metadata["batch"].(bool); batch {
-		switch n := metadata["updateCount"].(type) {
-		case int:
-			batchCount = n
-		case float64:
-			batchCount = int(n)
-		}
-	}
 	title, body, severity := "Arcane notification", subject, "info"
 	route := types.ApnsRoute{Kind: "environment", EnvironmentID: environmentID}
 	switch eventType {
-	case notifications.NotificationEventImageUpdate:
-		title, body = "Image update available", fmt.Sprintf("%s in %s", subject, environmentName)
-		if batchCount > 1 {
-			title = fmt.Sprintf("%d image updates available", batchCount)
-		}
-	case notifications.NotificationEventContainerUpdate:
-		title, body = "Container updated", fmt.Sprintf("%s in %s", subject, environmentName)
-		if batchCount > 1 {
-			title = fmt.Sprintf("%d containers updated", batchCount)
-		}
 	case notifications.NotificationEventVulnerabilityFound:
 		title, severity = "Vulnerability found", "warning"
 		body = fmt.Sprintf("%v in %s (%s)", metadata["cveId"], subject, environmentName)

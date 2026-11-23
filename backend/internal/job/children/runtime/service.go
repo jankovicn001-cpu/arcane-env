@@ -38,9 +38,6 @@ func ApplyStatuses(ctx context.Context, coordinator *runs.Coordinator, controlle
 			if environmentID != "0" || !hasScheduler {
 				return status.WorkerHealth, status.NextRun
 			}
-			if health, found := jobScheduler.WatcherHealth(status.ID); found {
-				return &health, status.NextRun
-			}
 			registered, found := jobScheduler.GetJob(status.ID)
 			if !found {
 				return status.WorkerHealth, status.NextRun

@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -24,19 +23,6 @@ type (
 		*testSchedulerJob
 		shouldSchedule func(context.Context) bool
 	}
-
-	testBusWatcher struct {
-		started chan struct{}
-		stopped chan struct{}
-		ranNow  chan context.Context
-		name    string
-	}
-
-	orderedStopBusWatcher struct {
-		started      chan struct{}
-		runnerExited chan struct{}
-		name         string
-	}
 )
 
 func (j *testSchedulerJob) Name() string { return j.name }
@@ -50,46 +36,6 @@ func (j *testSchedulerJob) Run(ctx context.Context) (types.SchedulerOutcome, err
 	return types.SchedulerOutcome{Status: types.RunStatusSucceeded}, nil
 }
 
-func (w *orderedStopBusWatcher) Name() string {
-	return w.name
-}
-
-func (w *orderedStopBusWatcher) Start(ctx context.Context) error {
-	close(w.started)
-	<-ctx.Done()
-	close(w.runnerExited)
-	return nil
-}
-
-func (*orderedStopBusWatcher) RunNow(context.Context) error {
-	return nil
-}
-
-func (w *orderedStopBusWatcher) Stop(context.Context) error {
-	select {
-	case <-w.runnerExited:
-		return nil
-	default:
-		return errors.New("watcher stopped before its runner exited")
-	}
-}
-
-func (w *testBusWatcher) RunNow(ctx context.Context) error {
-	if w.ranNow != nil {
-		w.ranNow <- ctx
-	}
-	return nil
-}
-
-func (w *testBusWatcher) Name() string { return w.name }
-
-func (w *testBusWatcher) Start(ctx context.Context) error {
-	close(w.started)
-	<-ctx.Done()
-	close(w.stopped)
-	return nil
-}
-
 func (j *conditionalTestSchedulerJob) ShouldSchedule(ctx context.Context) bool {
 	if j.shouldSchedule == nil {
 		return true
@@ -99,7 +45,7 @@ func (j *conditionalTestSchedulerJob) ShouldSchedule(ctx context.Context) bool {
 }
 
 func TestJobScheduler_StartScheduler_SkipsDisabledConditionalJobs(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
+	js := newJobSchedulerForTest(t, t.Context())
 
 	job := &conditionalTestSchedulerJob{
 		testSchedulerJob: &testSchedulerJob{
@@ -121,7 +67,7 @@ func TestJobScheduler_StartScheduler_SkipsDisabledConditionalJobs(t *testing.T) 
 }
 
 func TestJobScheduler_StartScheduler_ReportsInvalidJobSchedule(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
+	js := newJobSchedulerForTest(t, t.Context())
 	invalid := &testSchedulerJob{name: "invalid-startup-job", schedule: "not a cron schedule"}
 	valid := &testSchedulerJob{name: "valid-startup-job", schedule: "@every 1s"}
 
@@ -138,86 +84,8 @@ func TestJobScheduler_StartScheduler_ReportsInvalidJobSchedule(t *testing.T) {
 	requireScheduledJob(t, js, valid.Name())
 }
 
-func TestJobScheduler_StopWaitsForBusWatchers(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	js := newJobSchedulerForTest(t, ctx, nil)
-	watcher := &testBusWatcher{
-		name:    "test-bus-watcher",
-		started: make(chan struct{}),
-		stopped: make(chan struct{}),
-		ranNow:  make(chan context.Context, 1),
-	}
-
-	require.NoError(t, js.RegisterBusWatcher(watcher, true))
-	require.NoError(t, js.StartScheduler(t.Context()))
-
-	select {
-	case <-watcher.started:
-	case <-time.After(time.Second):
-		require.FailNow(t, "timed out waiting for bus watcher to start")
-	}
-
-	stopDone := make(chan error, 1)
-	go func() { stopDone <- js.Stop(t.Context()) }()
-	cancel()
-
-	select {
-	case <-watcher.stopped:
-	case <-time.After(time.Second):
-		require.FailNow(t, "timed out waiting for bus watcher to stop")
-	}
-	select {
-	case err := <-stopDone:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		require.FailNow(t, "scheduler did not stop after bus watcher finished")
-	}
-}
-
-func TestJobScheduler_StopJoinsRunnerBeforeStoppingWatcher(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
-	watcher := &orderedStopBusWatcher{
-		name:         "ordered-stop-watcher",
-		started:      make(chan struct{}),
-		runnerExited: make(chan struct{}),
-	}
-
-	require.NoError(t, js.RegisterBusWatcher(watcher, false))
-	select {
-	case <-watcher.started:
-	case <-time.After(time.Second):
-		require.FailNow(t, "timed out waiting for bus watcher to start")
-	}
-	require.NoError(t, js.Stop(t.Context()))
-}
-
-func TestJobScheduler_RegisterBusWatcherManualRunOption(t *testing.T) {
-	ctx := t.Context()
-
-	js := newJobSchedulerForTest(t, ctx, nil)
-	manualWatcher := &testBusWatcher{
-		name:    "manual-bus-watcher",
-		started: make(chan struct{}),
-		stopped: make(chan struct{}),
-		ranNow:  make(chan context.Context, 1),
-	}
-	automaticOnlyWatcher := &testBusWatcher{
-		name:    "automatic-only-bus-watcher",
-		started: make(chan struct{}),
-		stopped: make(chan struct{}),
-	}
-
-	require.NoError(t, js.RegisterBusWatcher(manualWatcher, true))
-	require.NoError(t, js.RegisterBusWatcher(automaticOnlyWatcher, false))
-
-	runCtx := t.Context()
-	require.NoError(t, js.RunBusWatcherNow(runCtx, manualWatcher.Name()))
-	require.Equal(t, runCtx, <-manualWatcher.ranNow)
-	require.Error(t, js.RunBusWatcherNow(runCtx, automaticOnlyWatcher.Name()))
-}
-
 func TestJobScheduler_AddJob_RemovesEntryWhenDisabled(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
+	js := newJobSchedulerForTest(t, t.Context())
 	require.NoError(t, js.StartScheduler(t.Context()))
 	enabled := true
 
@@ -246,7 +114,7 @@ func TestJobScheduler_AddJob_RemovesEntryWhenDisabled(t *testing.T) {
 }
 
 func TestJobScheduler_AddJob_AddsEntryWhenEnabled(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
+	js := newJobSchedulerForTest(t, t.Context())
 	require.NoError(t, js.StartScheduler(t.Context()))
 	enabled := false
 
@@ -273,14 +141,7 @@ func TestJobScheduler_AddJob_AddsEntryWhenEnabled(t *testing.T) {
 }
 
 func TestJobScheduler_StartScheduler_SchedulesNonConditionalJobs(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
-	watcher := &testBusWatcher{
-		name:    "image-polling",
-		started: make(chan struct{}),
-		stopped: make(chan struct{}),
-	}
-	require.NoError(t, js.RegisterBusWatcher(watcher, true))
-	require.NoError(t, js.coordinator.Install(t.Context(), watcher.Name(), "0 * * * *"))
+	js := newJobSchedulerForTest(t, t.Context())
 	require.NoError(t, js.coordinator.Install(t.Context(), "removed-job", "0 * * * *"))
 	executed := make(chan struct{}, 1)
 
@@ -302,11 +163,7 @@ func TestJobScheduler_StartScheduler_SchedulesNonConditionalJobs(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, state.Scheduled)
 	requireScheduledJob(t, js, job.Name())
-	polling, nextPolling, err := js.coordinator.ScheduleState(t.Context(), watcher.Name())
-	require.NoError(t, err)
-	require.Equal(t, "0 * * * *", polling.Schedule)
-	require.NotNil(t, nextPolling)
-	_, _, err = js.coordinator.ScheduleState(t.Context(), "removed-job")
+	_, _, err := js.coordinator.ScheduleState(t.Context(), "removed-job")
 	require.ErrorIs(t, err, actor.ErrStateNotFound)
 	select {
 	case <-executed:
@@ -316,7 +173,7 @@ func TestJobScheduler_StartScheduler_SchedulesNonConditionalJobs(t *testing.T) {
 }
 
 func TestJobScheduler_AddJob_UsesProvidedContext(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
+	js := newJobSchedulerForTest(t, t.Context())
 
 	var once sync.Once
 	runErrCh := make(chan error, 1)
@@ -343,7 +200,7 @@ func TestJobScheduler_AddJob_UsesProvidedContext(t *testing.T) {
 
 func TestJobScheduler_AddJob_UsesLifecycleContextForShutdown(t *testing.T) {
 	lifecycleCtx, cancelLifecycle := context.WithCancel(t.Context())
-	js := newJobSchedulerForTest(t, lifecycleCtx, nil)
+	js := newJobSchedulerForTest(t, lifecycleCtx)
 
 	startedCh := make(chan struct{}, 1)
 	stoppedCh := make(chan struct{}, 1)
@@ -382,7 +239,7 @@ func TestJobScheduler_AddJob_UsesLifecycleContextForShutdown(t *testing.T) {
 }
 
 func TestJobScheduler_AddJob_UpsertReplacesEntryWithoutLeaking(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
+	js := newJobSchedulerForTest(t, t.Context())
 	require.NoError(t, js.StartScheduler(t.Context()))
 
 	job := &testSchedulerJob{name: "dyn-upsert", schedule: "@every 5s"}
@@ -409,7 +266,7 @@ func TestJobScheduler_AddJob_UpsertReplacesEntryWithoutLeaking(t *testing.T) {
 }
 
 func TestJobScheduler_AddJob_InvalidRescheduleKeepsExistingEntry(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
+	js := newJobSchedulerForTest(t, t.Context())
 	require.NoError(t, js.StartScheduler(t.Context()))
 
 	job := &testSchedulerJob{name: "dyn-invalid-reschedule", schedule: "@every 5s"}
@@ -434,7 +291,7 @@ func TestJobScheduler_AddJob_InvalidRescheduleKeepsExistingEntry(t *testing.T) {
 }
 
 func TestJobScheduler_RemoveJob_RemovesEntryAndIsNoopWhenAbsent(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
+	js := newJobSchedulerForTest(t, t.Context())
 	require.NoError(t, js.StartScheduler(t.Context()))
 
 	// Removing an unknown job must be a safe no-op (e.g. deleting a sync that never
@@ -453,7 +310,7 @@ func TestJobScheduler_RemoveJob_RemovesEntryAndIsNoopWhenAbsent(t *testing.T) {
 }
 
 func TestJobScheduler_AddJob_GenericJobWithoutShouldRunIsScheduled(t *testing.T) {
-	js := newJobSchedulerForTest(t, t.Context(), nil)
+	js := newJobSchedulerForTest(t, t.Context())
 	require.NoError(t, js.StartScheduler(t.Context()))
 
 	job := &types.GenericJob{
@@ -474,7 +331,7 @@ func TestJobScheduler_StopWaitsForCanceledJobToFinish(t *testing.T) {
 	jobFinished := make(chan struct{}, 1)
 	var runOnce sync.Once
 
-	js := newJobSchedulerForTest(t, lifecycleCtx, nil)
+	js := newJobSchedulerForTest(t, lifecycleCtx)
 	require.NoError(t, js.RegisterJob(&testSchedulerJob{
 		name:     "test-shutdown-waits",
 		schedule: "@every 1s",

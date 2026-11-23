@@ -55,6 +55,20 @@ type (
 		Body   types.SetUserRoleAssignments
 	}
 
+	EnvironmentGroupAccessInput struct {
+		GroupID string `path:"id" doc:"Environment group ID"`
+	}
+
+	GrantEnvironmentGroupAccessInput struct {
+		GroupID string `path:"id" doc:"Environment group ID"`
+		Body    types.CreateEnvironmentAccessRequest
+	}
+
+	RevokeEnvironmentGroupAccessInput struct {
+		GroupID      string `path:"id" doc:"Environment group ID"`
+		AssignmentID string `path:"assignmentId" doc:"Role assignment ID"`
+	}
+
 	GetPermissionsManifestInput struct {
 		conditional.Params
 	}
@@ -190,16 +204,14 @@ func (h *RoleHandler) ListUserRoleAssignments(ctx context.Context, input *ListUs
 func (h *RoleHandler) SetUserRoleAssignments(ctx context.Context, input *SetUserRoleAssignmentsInput) (*handlerutil.Out[[]types.RoleAssignment], error) {
 	desired := make([]UserRoleAssignment, len(input.Body.Assignments))
 	for i, a := range input.Body.Assignments {
-		desired[i] = UserRoleAssignment{RoleID: a.RoleID, EnvironmentID: a.EnvironmentID}
+		desired[i] = UserRoleAssignment{RoleID: a.RoleID, EnvironmentID: a.EnvironmentID, EnvironmentGroupID: a.EnvironmentGroupID}
 	}
 	if err := h.roleService.ReplaceUserAssignments(ctx, input.UserID, RoleAssignmentSourceManual, desired); err != nil {
 		switch {
 		case errors.Is(err, common.ErrUserNotFound):
 			return nil, huma.Error404NotFound(err.Error())
-		case errors.Is(err, common.ErrInvalidRoleAssignment):
-			return nil, huma.Error400BadRequest(err.Error())
-		case errors.Is(err, common.ErrNoGlobalAdminRemains):
-			return nil, huma.Error409Conflict(err.Error())
+		case errors.Is(err, common.ErrInvalidRoleAssignment), errors.Is(err, common.ErrNoGlobalAdminRemains):
+			return nil, handlerutil.APIError(err)
 		}
 		return nil, huma.Error500InternalServerError("failed to set assignments: " + err.Error())
 	}
@@ -214,6 +226,33 @@ func (h *RoleHandler) SetUserRoleAssignments(ctx context.Context, input *SetUser
 	return &handlerutil.Out[[]types.RoleAssignment]{
 		Body: types.ApiResponse[[]types.RoleAssignment]{Success: true, Data: dtos},
 	}, nil
+}
+
+func (h *RoleHandler) ListEnvironmentGroupAccess(ctx context.Context, input *EnvironmentGroupAccessInput) (*handlerutil.Out[[]types.EnvironmentAccessEntry], error) {
+	entries, err := h.roleService.ListEnvironmentGroupAccess(ctx, input.GroupID)
+	if err != nil {
+		return nil, handlerutil.APIError(err)
+	}
+	return &handlerutil.Out[[]types.EnvironmentAccessEntry]{
+		Body: types.ApiResponse[[]types.EnvironmentAccessEntry]{Success: true, Data: entries},
+	}, nil
+}
+
+func (h *RoleHandler) GrantEnvironmentGroupAccess(ctx context.Context, input *GrantEnvironmentGroupAccessInput) (*handlerutil.Out[types.EnvironmentAccessEntry], error) {
+	entry, err := h.roleService.GrantEnvironmentGroupAccess(ctx, input.GroupID, input.Body)
+	if err != nil {
+		return nil, handlerutil.APIError(err)
+	}
+	return &handlerutil.Out[types.EnvironmentAccessEntry]{
+		Body: types.ApiResponse[types.EnvironmentAccessEntry]{Success: true, Data: entry},
+	}, nil
+}
+
+func (h *RoleHandler) RevokeEnvironmentGroupAccess(ctx context.Context, input *RevokeEnvironmentGroupAccessInput) (*handlerutil.Out[types.MessageResponse], error) {
+	if err := h.roleService.RevokeEnvironmentGroupAccess(ctx, input.GroupID, input.AssignmentID); err != nil {
+		return nil, handlerutil.APIError(err)
+	}
+	return handlerutil.MessageOutput("access removed", ""), nil
 }
 
 func (h *RoleHandler) toRoleDTO(ctx context.Context, r *Role) types.Role {
@@ -234,11 +273,12 @@ func (h *RoleHandler) toRoleDTO(ctx context.Context, r *Role) types.Role {
 
 func toAssignmentDTO(r *UserRoleAssignment) types.RoleAssignment {
 	return types.RoleAssignment{
-		ID:            r.ID,
-		UserID:        r.UserID,
-		RoleID:        r.RoleID,
-		EnvironmentID: r.EnvironmentID,
-		Source:        r.Source,
-		CreatedAt:     r.CreatedAt,
+		ID:                 r.ID,
+		UserID:             r.UserID,
+		RoleID:             r.RoleID,
+		EnvironmentID:      r.EnvironmentID,
+		EnvironmentGroupID: r.EnvironmentGroupID,
+		Source:             r.Source,
+		CreatedAt:          r.CreatedAt,
 	}
 }

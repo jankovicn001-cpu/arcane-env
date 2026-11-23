@@ -442,10 +442,15 @@ func TestMigration102_CleansUpRBACPermissions(t *testing.T) {
 	}
 
 	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{}, 117))
-	checker := expanded("image-updates:check", "image-updates:apply")
+	// Permissions migration 121 retires are still present here but no longer in the catalog.
+	retired := []string{
+		"containers:autoupdate", "image-updates:apply", "image-updates:check", "image-updates:list",
+		"image-updates:read", "jobs:restart", "podman:autoupdate", "system:upgrade",
+	}
+	checker := expanded("activities:read", "image-updates:list", "image-updates:read", "image-updates:check", "image-updates:apply")
 	assert.Equal(t, map[string][]string{
 		"r1": {"containers:list"},
-		"r2": expanded("image-updates:check", "image-updates:apply", "images:list"),
+		"r2": expanded("activities:read", "image-updates:list", "image-updates:read", "image-updates:check", "image-updates:apply", "images:list"),
 		"r3": checker,
 		"r4": {"volumes:list"},
 		"r5": expanded(
@@ -486,11 +491,11 @@ func TestMigration102_CleansUpRBACPermissions(t *testing.T) {
 		grants("e1", expanded("settings:read", "environment-settings:read")),
 		grants("", expanded("settings:update", "environment-settings:update")),
 	)...), apiKeyPermissions())
-	assert.Equal(t, sorted(authz.AllPermissions()...), rolePermissionsWhere(`id = 'r7'`)["r7"])
+	assert.Equal(t, sorted(slices.Concat(authz.AllPermissions(), retired)...), rolePermissionsWhere(`id = 'r7'`)["r7"])
 	customAdmin := authz.NewPermissionSet()
 	customAdmin.AddGlobal(rolePermissionsWhere(`id = 'r7'`)["r7"]...)
 	assert.True(t, customAdmin.IsGlobalAdmin())
-	assert.Equal(t, sorted(grants("", authz.AllPermissions())...), apiKeyPermissionsFor("k2"))
+	assert.Equal(t, sorted(grants("", slices.Concat(authz.AllPermissions(), retired))...), apiKeyPermissionsFor("k2"))
 	assert.Contains(t, rolePermissionsWhere(`id = 'r8'`)["r8"], "build-workspaces:list")
 	assert.Contains(t, apiKeyPermissionsFor("k3"), "build-workspaces:list@e1")
 	var shortIDs int
@@ -941,6 +946,235 @@ func TestMigration117_GrantsProjectsJobsRun(t *testing.T) {
 	assert.JSONEq(t, `["projects:list","projects:read","projects:deploy"]`, deployer)
 	assert.JSONEq(t, `["projects:list","projects:read"]`, reader)
 	assert.Empty(t, scopes)
+}
+
+func TestMigration118_AddsEnvironmentGroups(t *testing.T) {
+	ctx := t.Context()
+	rawDB, _ := newSQLiteSQLDB(t, t.TempDir(), "arcane-environment-groups.db")
+	schemaObjects := func() int {
+		var count int
+		require.NoError(t, rawDB.QueryRowContext(ctx, `SELECT
+			(SELECT COUNT(*) FROM pragma_table_info('environments') WHERE name = 'group_id') +
+			(SELECT COUNT(*) FROM sqlite_master WHERE name IN ('environment_groups', 'idx_environment_groups_name', 'idx_environments_group_id'))`).Scan(&count))
+		return count
+	}
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{}, 117))
+	_, err := rawDB.ExecContext(ctx, `INSERT INTO environments (id, name, api_url, status, enabled) VALUES ('ge1', 'Remote', 'edge://remote', 'online', TRUE)`)
+	require.NoError(t, err)
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{}, 118))
+	assert.Equal(t, 4, schemaObjects())
+	var groupID stdsql.NullString
+	require.NoError(t, rawDB.QueryRowContext(ctx, `SELECT group_id FROM environments WHERE id = 'ge1'`).Scan(&groupID))
+	assert.False(t, groupID.Valid, "existing environments start unassigned")
+
+	_, err = rawDB.ExecContext(ctx, `INSERT INTO environment_groups (id, name) VALUES ('g1', 'Prod')`)
+	require.NoError(t, err)
+	_, err = rawDB.ExecContext(ctx, `INSERT INTO environment_groups (id, name) VALUES ('g2', 'PROD')`)
+	require.Error(t, err, "group names are unique case-insensitively")
+	var description string
+	require.NoError(t, rawDB.QueryRowContext(ctx, `SELECT description FROM environment_groups WHERE id = 'g1'`).Scan(&description))
+	assert.Empty(t, description)
+
+	conn, err := rawDB.Conn(ctx)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `UPDATE environments SET group_id = 'missing' WHERE id = 'ge1'`)
+	require.Error(t, err, "group_id references environment_groups")
+	_, err = conn.ExecContext(ctx, `UPDATE environments SET group_id = 'g1' WHERE id = 'ge1'`)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `DELETE FROM environment_groups WHERE id = 'g1'`)
+	require.NoError(t, err)
+	require.NoError(t, conn.QueryRowContext(ctx, `SELECT group_id FROM environments WHERE id = 'ge1'`).Scan(&groupID))
+	assert.False(t, groupID.Valid, "deleting a group unassigns its environments")
+	require.NoError(t, conn.Close())
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{AllowDowngrade: true}, 117))
+	assert.Zero(t, schemaObjects())
+}
+
+func TestMigration119_AddsEnvironmentGroupRoleScope(t *testing.T) {
+	ctx := t.Context()
+	rawDB, _ := newSQLiteSQLDB(t, t.TempDir(), "arcane-environment-group-role-scope.db")
+	schemaObjects := func() int {
+		var count int
+		require.NoError(t, rawDB.QueryRowContext(ctx, `SELECT
+			(SELECT COUNT(*) FROM pragma_table_info('user_role_assignments') WHERE name = 'environment_group_id') +
+			(SELECT COUNT(*) FROM pragma_table_info('oidc_role_mappings') WHERE name = 'environment_group_id') +
+			(SELECT COUNT(*) FROM sqlite_master WHERE name IN ('idx_ura_env_group', 'idx_orm_env_group'))`).Scan(&count))
+		return count
+	}
+	countRows := func(query string) int {
+		var count int
+		require.NoError(t, rawDB.QueryRowContext(ctx, query).Scan(&count))
+		return count
+	}
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{}, 118))
+	_, err := rawDB.ExecContext(ctx, `
+		INSERT INTO users (id, username, password_hash, roles) VALUES ('u1', 'u1', 'unused', '[]');
+		INSERT INTO roles (id, name) VALUES ('r1', 'Role');
+		INSERT INTO environments (id, name, api_url) VALUES ('e1', 'Agent', 'http://agent');
+		INSERT INTO environment_groups (id, name) VALUES ('g1', 'Prod'), ('g2', 'Dev');
+		INSERT INTO user_role_assignments (id, user_id, role_id) VALUES ('global', 'u1', 'r1')`)
+	require.NoError(t, err)
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{}, 119))
+	assert.Equal(t, 4, schemaObjects())
+
+	conn, err := rawDB.Conn(ctx)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `INSERT INTO user_role_assignments (id, user_id, role_id, environment_group_id) VALUES
+		('g1-grant', 'u1', 'r1', 'g1'), ('g2-grant', 'u1', 'r1', 'g2')`)
+	require.NoError(t, err, "a group grant may sit beside a global grant of the same role")
+	_, err = conn.ExecContext(ctx, `INSERT INTO user_role_assignments (id, user_id, role_id, environment_group_id) VALUES ('dup', 'u1', 'r1', 'g1')`)
+	require.Error(t, err, "group grants are unique per user, role, group and source")
+	_, err = conn.ExecContext(ctx, `INSERT INTO user_role_assignments (id, user_id, role_id, environment_group_id) VALUES ('orphan', 'u1', 'r1', 'missing')`)
+	require.Error(t, err, "environment_group_id references environment_groups")
+	_, err = conn.ExecContext(ctx, `INSERT INTO user_role_assignments (id, user_id, role_id, environment_id, environment_group_id) VALUES ('both', 'u1', 'r1', 'e1', 'g1')`)
+	require.Error(t, err, "assignments take at most one scope")
+	_, err = conn.ExecContext(ctx, `INSERT INTO oidc_role_mappings (id, claim_value, role_id, environment_id, environment_group_id) VALUES ('both', 'c', 'r1', 'e1', 'g1')`)
+	require.Error(t, err, "mappings take at most one scope")
+	_, err = conn.ExecContext(ctx, `INSERT INTO oidc_role_mappings (id, claim_value, role_id, environment_group_id) VALUES ('g1-mapping', 'c', 'r1', 'g1'), ('g2-mapping', 'c', 'r1', 'g2')`)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx, `DELETE FROM environment_groups WHERE id = 'g1'`)
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+	assert.Equal(t, 0, countRows(`SELECT COUNT(*) FROM user_role_assignments WHERE id = 'g1-grant'`), "deleting a group deletes its grants")
+	assert.Equal(t, 0, countRows(`SELECT COUNT(*) FROM oidc_role_mappings WHERE id = 'g1-mapping'`))
+	assert.Equal(t, 1, countRows(`SELECT COUNT(*) FROM user_role_assignments WHERE environment_group_id IS NULL AND environment_id IS NULL`),
+		"no group grant becomes global")
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{AllowDowngrade: true}, 118))
+	assert.Zero(t, schemaObjects())
+	assert.Equal(t, 1, countRows(`SELECT COUNT(*) FROM user_role_assignments`), "the down migration deletes group grants instead of making them global")
+	assert.Equal(t, 1, countRows(`SELECT COUNT(*) FROM user_role_assignments WHERE id = 'global'`))
+	assert.Equal(t, 0, countRows(`SELECT COUNT(*) FROM oidc_role_mappings`))
+	_, err = rawDB.ExecContext(ctx, `INSERT INTO user_role_assignments (id, user_id, role_id) VALUES ('dup', 'u1', 'r1')`)
+	require.Error(t, err, "the original unique index is restored")
+}
+
+func TestMigration120_AddsUserGroups(t *testing.T) {
+	ctx := t.Context()
+	rawDB, _ := newSQLiteSQLDB(t, t.TempDir(), "arcane-user-groups.db")
+	userGroupTables := func() int {
+		var count int
+		require.NoError(t, rawDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+			WHERE type = 'table' AND name IN ('user_groups', 'user_group_links', 'user_group_members', 'user_group_role_assignments')`).Scan(&count))
+		return count
+	}
+	countRows := func(conn *stdsql.Conn, query string) int {
+		var count int
+		require.NoError(t, conn.QueryRowContext(ctx, query).Scan(&count))
+		return count
+	}
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{}, 119))
+	_, err := rawDB.ExecContext(ctx, `
+		INSERT INTO users (id, username, password_hash, roles) VALUES ('u1', 'u1', 'unused', '[]'), ('u2', 'u2', 'unused', '[]');
+		INSERT INTO roles (id, name) VALUES ('r1', 'Role');
+		INSERT INTO environments (id, name, api_url) VALUES ('e1', 'Agent', 'http://agent');
+		INSERT INTO environment_groups (id, name) VALUES ('g1', 'Prod');
+		INSERT INTO user_role_assignments (id, user_id, role_id) VALUES ('direct', 'u1', 'r1')`)
+	require.NoError(t, err)
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{}, 120))
+	assert.Equal(t, 4, userGroupTables())
+
+	conn, err := rawDB.Conn(ctx)
+	require.NoError(t, err)
+	exec := func(query string) error {
+		_, execErr := conn.ExecContext(ctx, query)
+		return execErr
+	}
+	require.NoError(t, exec(`PRAGMA foreign_keys = ON`))
+	require.NoError(t, exec(`INSERT INTO user_groups (id, name) VALUES ('ops', 'Ops'), ('dev', 'Dev')`))
+	require.Error(t, exec(`INSERT INTO user_groups (id, name) VALUES ('dup', 'OPS')`), "names are unique case-insensitively")
+	var description string
+	require.NoError(t, conn.QueryRowContext(ctx, `SELECT description FROM user_groups WHERE id = 'ops'`).Scan(&description))
+	assert.Empty(t, description)
+
+	require.NoError(t, exec(`INSERT INTO user_group_links (id, user_group_id, kind, value) VALUES ('l1', 'ops', 'oidc', 'Admins'), ('l2', 'ops', 'ldap', 'admins')`))
+	require.Error(t, exec(`INSERT INTO user_group_links (id, user_group_id, kind, value) VALUES ('l3', 'ops', 'oidc', 'ADMINS')`), "link values are unique per kind case-insensitively")
+	require.Error(t, exec(`INSERT INTO user_group_links (id, user_group_id, kind, value) VALUES ('l4', 'ops', 'saml', 'x')`), "link kinds are validated")
+
+	require.NoError(t, exec(`INSERT INTO user_group_members (id, user_group_id, user_id, source) VALUES ('m1', 'ops', 'u1', 'manual'), ('m2', 'ops', 'u1', 'oidc'), ('m3', 'dev', 'u2', 'ldap')`))
+	require.Error(t, exec(`INSERT INTO user_group_members (id, user_group_id, user_id, source) VALUES ('m4', 'ops', 'u1', 'oidc')`), "memberships are unique per group, user and source")
+	require.Error(t, exec(`INSERT INTO user_group_members (id, user_group_id, user_id, source) VALUES ('m5', 'ops', 'missing', 'manual')`), "user_id references users")
+	require.Error(t, exec(`INSERT INTO user_group_members (id, user_group_id, user_id, source) VALUES ('m6', 'ops', 'u2', 'env')`), "member sources are validated")
+
+	require.NoError(t, exec(`INSERT INTO user_group_role_assignments (id, user_group_id, role_id, environment_id, environment_group_id) VALUES
+		('global', 'ops', 'r1', NULL, NULL), ('agent', 'ops', 'r1', 'e1', NULL), ('env', 'ops', 'r1', NULL, 'g1'), ('dev-env', 'dev', 'r1', NULL, 'g1')`))
+	require.Error(t, exec(`INSERT INTO user_group_role_assignments (id, user_group_id, role_id) VALUES ('dup', 'ops', 'r1')`), "grants are unique per group, role and scope")
+	require.Error(t, exec(`INSERT INTO user_group_role_assignments (id, user_group_id, role_id, environment_id, environment_group_id) VALUES ('both', 'ops', 'r1', 'e1', 'g1')`),
+		"grants take at most one scope")
+	require.Error(t, exec(`INSERT INTO user_group_role_assignments (id, user_group_id, role_id, environment_group_id) VALUES ('orphan', 'ops', 'r1', 'missing')`),
+		"environment_group_id references environment_groups")
+	require.Error(t, exec(`INSERT INTO user_group_role_assignments (id, user_group_id, role_id, environment_id) VALUES ('orphan', 'ops', 'r1', 'missing')`),
+		"environment_id references environments")
+
+	require.NoError(t, exec(`DELETE FROM environment_groups WHERE id = 'g1'`))
+	assert.Zero(t, countRows(conn, `SELECT COUNT(*) FROM user_group_role_assignments WHERE id IN ('env', 'dev-env')`), "deleting an environment deletes its group grants")
+	require.NoError(t, exec(`DELETE FROM environments WHERE id = 'e1'`))
+	assert.Zero(t, countRows(conn, `SELECT COUNT(*) FROM user_group_role_assignments WHERE id = 'agent'`), "deleting an agent deletes its group grants")
+	assert.Equal(t, 1, countRows(conn, `SELECT COUNT(*) FROM user_group_role_assignments WHERE environment_id IS NULL AND environment_group_id IS NULL`),
+		"no scoped grant becomes global")
+	require.NoError(t, exec(`DELETE FROM users WHERE id = 'u2'`))
+	assert.Zero(t, countRows(conn, `SELECT COUNT(*) FROM user_group_members WHERE user_id = 'u2'`), "deleting a user deletes their memberships")
+	require.NoError(t, exec(`DELETE FROM user_groups WHERE id = 'ops'`))
+	for _, table := range []string{"user_group_links", "user_group_members", "user_group_role_assignments"} {
+		assert.Zero(t, countRows(conn, `SELECT COUNT(*) FROM `+table+` WHERE user_group_id = 'ops'`), "deleting a group deletes its %s", table)
+	}
+	require.NoError(t, conn.Close())
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{AllowDowngrade: true}, 119))
+	assert.Zero(t, userGroupTables())
+	var direct int
+	require.NoError(t, rawDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_role_assignments`).Scan(&direct))
+	assert.Equal(t, 1, direct, "the down migration leaves direct assignments alone")
+}
+
+func TestMigration121_RemovesUpdatePermissions(t *testing.T) {
+	ctx := t.Context()
+	rawDB, _ := newSQLiteSQLDB(t, t.TempDir(), "arcane-update-permissions.db")
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{}, 120))
+	_, err := rawDB.ExecContext(ctx, `INSERT INTO roles (id, name, permissions) VALUES
+		('r1', 'Mixed', '["containers:list","image-updates:apply","system:upgrade","jobs:restart","images:list"]'),
+		('r2', 'Updates only', '["image-updates:list","image-updates:read","containers:autoupdate","podman:autoupdate"]'),
+		('r3', 'Untouched', '["volumes:list"]')`)
+	require.NoError(t, err)
+	_, err = rawDB.ExecContext(ctx, `INSERT INTO api_keys (id, name, key_hash, key_prefix) VALUES ('k1', 'Key', 'hash', 'prefix')`)
+	require.NoError(t, err)
+	_, err = rawDB.ExecContext(ctx, `INSERT INTO api_key_permissions (id, api_key_id, permission) VALUES
+		('p1', 'k1', 'image-updates:check'),
+		('p2', 'k1', 'containers:list')`)
+	require.NoError(t, err)
+
+	require.NoError(t, migrateDatabase(ctx, rawDB, dbProviderSQLite, MigrationOptions{}, 121))
+	rolePermissions := map[string]string{}
+	rows, err := rawDB.QueryContext(ctx, `SELECT id, permissions FROM roles WHERE id IN ('r1', 'r2', 'r3')`)
+	require.NoError(t, err)
+	for rows.Next() {
+		var id, permissions string
+		require.NoError(t, rows.Scan(&id, &permissions))
+		rolePermissions[id] = permissions
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	assert.Equal(t, map[string]string{
+		"r1": `["containers:list","images:list"]`,
+		"r2": `[]`,
+		"r3": `["volumes:list"]`,
+	}, rolePermissions)
+	var apiKeyPermission string
+	require.NoError(t, rawDB.QueryRowContext(ctx, `SELECT group_concat(permission) FROM api_key_permissions WHERE api_key_id = 'k1'`).Scan(&apiKeyPermission))
+	assert.Equal(t, "containers:list", apiKeyPermission)
 }
 
 func TestMigrateDatabase_BlocksFutureGooseVersionWithoutFlag(t *testing.T) {

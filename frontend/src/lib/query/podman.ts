@@ -54,7 +54,6 @@ const EMPTY_PODMAN_STATUS: PodmanStatus = {
 	rootless: false,
 	quadletsSupported: false,
 	quadletAppsSupported: false,
-	autoUpdateMode: 'unavailable',
 	systemdAvailable: false
 };
 

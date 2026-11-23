@@ -163,8 +163,6 @@ export function getTableDisplayEntries<T extends RowData & { id: string }>(
 const BADGE_COLUMNS = new Set([
 	'status',
 	'state',
-	'updates',
-	'update',
 	'enabled',
 	'inUse',
 	'severity',
@@ -182,7 +180,6 @@ const FOOTER_COLUMNS = new Set([
 	'createdAt',
 	'created',
 	'updatedAt',
-	'checkedAt',
 	'lastUsedAt',
 	'timestamp',
 	'scanTime',

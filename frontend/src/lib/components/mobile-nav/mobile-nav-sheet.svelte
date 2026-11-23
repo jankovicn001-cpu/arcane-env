@@ -2,12 +2,9 @@
 	import { page } from '$app/state';
 
 	import ActivityCenterTrigger from '#lib/components/activity/activity-center-trigger.svelte';
-	import UpdateAllDialog from '#lib/components/dialogs/update-all-dialog.svelte';
-	import UpdateAvailableBanner from '#lib/components/sidebar/update-available-banner.svelte';
 	import * as Drawer from '#lib/components/ui/drawer/index.js';
-	import { navigationItems, filterByPermissions } from '#lib/config/navigation-config.js';
+	import { navigationItems, filterByPermissions, getResourceNavigationItems } from '#lib/config/navigation-config.js';
 	import type { NavigationItem } from '#lib/config/navigation-config.js';
-	import { useUpgradeCheck } from '#lib/hooks/use-upgrade-check.svelte.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import userStore from '#lib/stores/user-store.svelte.js';
 	import type { PermissionsManifest } from '#lib/types/role.js';
@@ -23,8 +20,7 @@
 		versionInformation,
 		swarmItems = [],
 		podmanItems = [],
-		permissionsManifest = null,
-		debug = false
+		permissionsManifest = null
 	}: {
 		open: boolean;
 		user?: User | null;
@@ -32,22 +28,15 @@
 		swarmItems?: NavigationItem[];
 		podmanItems?: NavigationItem[];
 		permissionsManifest?: PermissionsManifest | null;
-		debug?: boolean;
 	} = $props();
 
 	const currentPath = $derived(page.url.pathname);
 	const memoizedUser = $derived(user ?? userStore.current);
 	const overviewItems = $derived(filterByPermissions(navigationItems.overviewItems, memoizedUser ?? null, permissionsManifest));
 	const deployItems = $derived(filterByPermissions(navigationItems.deployItems, memoizedUser ?? null, permissionsManifest));
-	const resourceItems = $derived(filterByPermissions(navigationItems.resourceItems, memoizedUser ?? null, permissionsManifest));
+	const resourceItems = $derived(filterByPermissions(getResourceNavigationItems(), memoizedUser ?? null, permissionsManifest));
 	const permittedPodmanItems = $derived(filterByPermissions(podmanItems, memoizedUser ?? null, permissionsManifest));
 	const adminItems = $derived(filterByPermissions(navigationItems.adminItems, memoizedUser ?? null, permissionsManifest));
-
-	const upgradeCheck = useUpgradeCheck({
-		queryScope: 'mobile-nav',
-		getVersionInformation: () => versionInformation,
-		getDebug: () => debug
-	});
 
 	function handleItemClick() {
 		open = false;
@@ -192,24 +181,7 @@
 						{versionInformation.displayVersion ?? versionInformation.currentVersion}
 					</p>
 				</div>
-				{#if upgradeCheck.shouldShowBanner}
-					<UpdateAvailableBanner
-						class="mt-3 rounded-xl px-3 py-2"
-						label={m.sidebar_update_available()}
-						versionChip={upgradeCheck.versionChip}
-						updateCount={upgradeCheck.updateCount}
-						disabled={upgradeCheck.checkingUpgrade}
-						onclick={upgradeCheck.openDialog}
-					/>
-				{/if}
 			{/if}
 		</div>
 	</Drawer.Content>
 </Drawer.Root>
-
-<UpdateAllDialog
-	bind:open={upgradeCheck.showConfirmDialog}
-	{versionInformation}
-	canConfirm={upgradeCheck.shouldShowUpgrade}
-	debugDemo={debug}
-/>

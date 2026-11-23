@@ -1,18 +1,15 @@
 <script lang="ts">
 	import { createQuery } from '@tanstack/svelte-query';
 
-	import { UpdateIcon } from '#lib/icons/index.js';
-	import { m } from '#lib/paraglide/messages.js';
-	import { upgradeVersionInfoQuery } from '#lib/query/system.js';
+	import { environmentVersionInfoQuery } from '#lib/query/system.js';
 	import type { Environment } from '#lib/types/environment.js';
 
 	let { environment, isOnline }: { environment: Environment; isOnline: boolean } = $props();
 
-	// Shares its key with the upgrade menu item, so opening a row's actions reuses this
-	// result instead of asking the agent again. Offline environments are never queried:
-	// remote version lookups are proxied through the agent and would just time out.
+	// Offline environments are never queried: remote version lookups are proxied
+	// through the agent and would just time out.
 	const versionQuery = createQuery(() => ({
-		...upgradeVersionInfoQuery(environment.id),
+		...environmentVersionInfoQuery(environment.id),
 		enabled: isOnline,
 		retry: false
 	}));
@@ -22,19 +19,7 @@
 </script>
 
 {#if label}
-	<div class="flex items-center gap-1.5">
-		<span class="font-mono text-sm">{label}</span>
-		{#if info?.updateAvailable}
-			<span
-				class="inline-flex items-center text-warning"
-				title={info.newestVersion
-					? m.sidebar_update_available_tooltip({ version: info.newestVersion })
-					: m.sidebar_update_available()}
-			>
-				<UpdateIcon class="size-3.5" />
-			</span>
-		{/if}
-	</div>
+	<span class="font-mono text-sm">{label}</span>
 {:else}
 	<span class="text-sm text-muted-foreground">—</span>
 {/if}

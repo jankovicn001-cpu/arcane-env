@@ -158,11 +158,14 @@ func newGetCmd() *cobra.Command {
 					if len(data.RoleAssignments) > 0 {
 						rows := make([][]string, len(data.RoleAssignments))
 						for i, a := range data.RoleAssignments {
-							env := "global"
-							if a.EnvironmentID != nil {
-								env = *a.EnvironmentID
+							scope := "global"
+							switch {
+							case a.EnvironmentGroupID != nil:
+								scope = "environment-group:" + *a.EnvironmentGroupID
+							case a.EnvironmentID != nil:
+								scope = *a.EnvironmentID
 							}
-							rows[i] = []string{a.RoleID, env, a.Source}
+							rows[i] = []string{a.RoleID, scope, a.Source}
 						}
 						if tableErr := output.Table([]string{"ROLE", "SCOPE", "SOURCE"}, rows); tableErr != nil {
 							return tableErr
@@ -267,7 +270,7 @@ func roleAssignmentSummary(assignments []types.RoleAssignmentSummary) string {
 			buckets[a.RoleID] = b
 			order = append(order, a.RoleID)
 		}
-		if a.EnvironmentID == nil {
+		if a.EnvironmentID == nil && a.EnvironmentGroupID == nil {
 			b.hasGlobal = true
 		} else {
 			b.envScoped++

@@ -107,12 +107,12 @@ func newListCmd() *cobra.Command {
 	cmdutil.EnumVarP(cmd, cmd.Flags(), &opts.status, "status", "", "", "Filter by status",
 		types.ActivityStatusQueued, types.ActivityStatusRunning, types.ActivityStatusSuccess, types.ActivityStatusFailed, types.ActivityStatusCancelled)
 	cmdutil.EnumVarP(cmd, cmd.Flags(), &opts.activityType, "type", "", "", "Filter by activity type",
-		types.ActivityTypeJobRun, types.ActivityTypeImagePull, types.ActivityTypeImageBuild, types.ActivityTypeImageUpdateCheck,
+		types.ActivityTypeJobRun, types.ActivityTypeImagePull, types.ActivityTypeImageBuild,
 		types.ActivityTypeProjectPull, types.ActivityTypeProjectBuild, types.ActivityTypeProjectDeploy, types.ActivityTypeProjectRedeploy,
 		types.ActivityTypeProjectDown, types.ActivityTypeProjectRestart, types.ActivityTypeProjectDestroy, types.ActivityTypeContainerStart,
 		types.ActivityTypeContainerStop, types.ActivityTypeContainerRestart, types.ActivityTypeContainerRedeploy, types.ActivityTypeContainerEdit,
 		types.ActivityTypeContainerDelete, types.ActivityTypeContainerKill, types.ActivityTypeContainerPause, types.ActivityTypeContainerUnpause,
-		types.ActivityTypeVulnerabilityScan, types.ActivityTypeImagePatch, types.ActivityTypeAutoUpdate, types.ActivityTypeSystemPrune,
+		types.ActivityTypeVulnerabilityScan, types.ActivityTypeImagePatch, types.ActivityTypeSystemPrune,
 		types.ActivityTypeResourceAction)
 	cmd.Flags().StringVar(&opts.resourceType, "resource-type", "", "Filter by resource type")
 	return cmd

@@ -724,13 +724,6 @@ var permissionCatalog = []PermissionCatalogResource{
 				Description: "Open an interactive shell inside a container",
 				Requires:    []string{PermContainersRead},
 			},
-			{
-				Key:         "autoupdate",
-				Permission:  PermContainersAutoUpdate,
-				Label:       "Auto-update",
-				Description: "Turn automatic updates on or off for a container",
-				Requires:    []string{PermContainersRead},
-			},
 		},
 	},
 	{
@@ -1301,7 +1294,7 @@ var permissionCatalog = []PermissionCatalogResource{
 	{
 		Key:         "podman",
 		Label:       "Podman",
-		Description: "Podman runtime status and auto-update",
+		Description: "Podman runtime status",
 		Scope:       PermissionScopeEnv,
 		Actions: []PermissionCatalogAction{
 			{
@@ -1309,13 +1302,6 @@ var permissionCatalog = []PermissionCatalogResource{
 				Permission:  PermPodmanRead,
 				Label:       "Read",
 				Description: "View Podman status and info",
-			},
-			{
-				Key:         "autoupdate",
-				Permission:  PermPodmanAutoUpdate,
-				Label:       "Run auto-update",
-				Description: "Run podman auto-update",
-				Requires:    []string{PermPodmanRead},
 			},
 		},
 	},
@@ -1672,13 +1658,6 @@ var permissionCatalog = []PermissionCatalogResource{
 				Requires:    []string{PermJobsRead, PermActivitiesRead},
 			},
 			{
-				Key:         "restart",
-				Permission:  PermJobsRestart,
-				Label:       "Restart",
-				Description: "Restart a continuous job worker",
-				Requires:    []string{PermJobsRead},
-			},
-			{
 				Key:         "retry",
 				Permission:  PermJobsRetry,
 				Label:       "Retry",
@@ -1753,7 +1732,7 @@ var permissionCatalog = []PermissionCatalogResource{
 				Key:         "read",
 				Permission:  PermSystemRead,
 				Label:       "Read",
-				Description: "View system health, Docker info, disk usage, stats, and upgrade status",
+				Description: "View system health, Docker info, disk usage, and stats",
 			},
 			{
 				Key:         "prune",
@@ -1761,48 +1740,6 @@ var permissionCatalog = []PermissionCatalogResource{
 				Label:       "Prune",
 				Description: "Remove unused Docker resources",
 				Requires:    []string{PermSystemRead, PermActivitiesRead},
-			},
-			{
-				Key:         "upgrade",
-				Permission:  PermSystemUpgrade,
-				Label:       "Trigger upgrade",
-				Description: "Upgrade Arcane",
-				Requires:    []string{PermSystemRead},
-			},
-		},
-	},
-	{
-		Key:         "image-updates",
-		Label:       "Image Updates",
-		Description: "Image update checks and the updater",
-		Scope:       PermissionScopeEnv,
-		Actions: []PermissionCatalogAction{
-			{
-				Key:         "list",
-				Permission:  PermImageUpdatesList,
-				Label:       "List",
-				Description: "View update summaries, update info for images, and updater history",
-			},
-			{
-				Key:         "read",
-				Permission:  PermImageUpdatesRead,
-				Label:       "Read",
-				Description: "View updater status and release notes",
-				Requires:    []string{PermImageUpdatesList},
-			},
-			{
-				Key:         "check",
-				Permission:  PermImageUpdatesCheck,
-				Label:       "Check",
-				Description: "Check images and projects for updates",
-				Requires:    []string{PermImageUpdatesRead, PermActivitiesRead},
-			},
-			{
-				Key:         "apply",
-				Permission:  PermImageUpdatesApply,
-				Label:       "Apply updates",
-				Description: "Pull new images and recreate containers or projects with them",
-				Requires:    []string{PermImageUpdatesRead, PermActivitiesRead},
 			},
 		},
 	},

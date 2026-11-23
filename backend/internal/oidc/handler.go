@@ -379,10 +379,14 @@ func (h *OidcHandler) ListOidcRoleMappings(ctx context.Context, _ *ListOidcRoleM
 }
 
 func (h *OidcHandler) CreateOidcRoleMapping(ctx context.Context, input *CreateOidcRoleMappingInput) (*handlerutil.Out[types.OidcRoleMapping], error) {
-	mapping, err := h.roleService.CreateOidcMapping(ctx, input.Body.ClaimValue, input.Body.RoleID, input.Body.EnvironmentID)
+	mapping, err := h.roleService.CreateOidcMapping(ctx, types.OidcRoleMappingSpec{
+		EnvironmentID:      input.Body.EnvironmentID,
+		EnvironmentGroupID: input.Body.EnvironmentGroupID,
+		ClaimValue:         input.Body.ClaimValue,
+		RoleID:             input.Body.RoleID,
+	})
 	if err != nil {
-		apiErr := common.ToAPIError(err)
-		return nil, huma.NewError(apiErr.HTTPStatus(), apiErr.Message)
+		return nil, handlerutil.APIError(err)
 	}
 	return &handlerutil.Out[types.OidcRoleMapping]{
 		Body: types.ApiResponse[types.OidcRoleMapping]{
@@ -402,16 +406,15 @@ func (h *OidcHandler) UpdateOidcRoleMapping(ctx context.Context, input *UpdateOi
 		apiErr := common.ToAPIError(err)
 		return nil, huma.NewError(apiErr.HTTPStatus(), apiErr.Message)
 	}
-	mapping, err := h.roleService.UpdateOidcMapping(
-		ctx,
-		input.ID,
-		kit.Ternary(submitted["claimValue"], input.Body.ClaimValue, current.ClaimValue),
-		kit.Ternary(submitted["roleId"], input.Body.RoleID, current.RoleID),
-		kit.Ternary(submitted["environmentId"], input.Body.EnvironmentID, current.EnvironmentID),
-	)
+	// A submitted null clears a scope field; the service rejects a result that sets both.
+	mapping, err := h.roleService.UpdateOidcMapping(ctx, input.ID, types.OidcRoleMappingSpec{
+		EnvironmentID:      kit.Ternary(submitted["environmentId"], input.Body.EnvironmentID, current.EnvironmentID),
+		EnvironmentGroupID: kit.Ternary(submitted["environmentGroupId"], input.Body.EnvironmentGroupID, current.EnvironmentGroupID),
+		ClaimValue:         kit.Ternary(submitted["claimValue"], input.Body.ClaimValue, current.ClaimValue),
+		RoleID:             kit.Ternary(submitted["roleId"], input.Body.RoleID, current.RoleID),
+	})
 	if err != nil {
-		apiErr := common.ToAPIError(err)
-		return nil, huma.NewError(apiErr.HTTPStatus(), apiErr.Message)
+		return nil, handlerutil.APIError(err)
 	}
 	return &handlerutil.Out[types.OidcRoleMapping]{
 		Body: types.ApiResponse[types.OidcRoleMapping]{
@@ -439,12 +442,13 @@ func (h *OidcHandler) DeleteOidcRoleMapping(ctx context.Context, input *DeleteOi
 
 func toOidcMappingDTO(m *role.OidcRoleMapping) types.OidcRoleMapping {
 	return types.OidcRoleMapping{
-		ID:            m.ID,
-		ClaimValue:    m.ClaimValue,
-		RoleID:        m.RoleID,
-		EnvironmentID: m.EnvironmentID,
-		Source:        m.Source,
-		CreatedAt:     m.CreatedAt,
-		UpdatedAt:     m.UpdatedAt,
+		ID:                 m.ID,
+		ClaimValue:         m.ClaimValue,
+		RoleID:             m.RoleID,
+		EnvironmentID:      m.EnvironmentID,
+		EnvironmentGroupID: m.EnvironmentGroupID,
+		Source:             m.Source,
+		CreatedAt:          m.CreatedAt,
+		UpdatedAt:          m.UpdatedAt,
 	}
 }

@@ -181,35 +181,12 @@ type (
 		HasBuild      bool                 `json:"hasBuild" doc:"Whether the job declares a build"`
 	}
 
-	ProjectServiceUpdateInfo struct {
-		UpdateInfo *ImageUpdateInfo `json:"updateInfo,omitempty"`
-		ImageRef   string           `json:"imageRef"`
-	}
-
-	ProjectUpdateInfo struct {
-		ServiceUpdates     map[string]ProjectServiceUpdateInfo `json:"serviceUpdates,omitempty"`
-		ErrorMessage       *string                             `json:"errorMessage,omitempty"`
-		UpdateInfoByRef    map[string]ImageUpdateInfo          `json:"updateInfoByRef,omitempty"`
-		LastCheckedAt      *time.Time                          `json:"lastCheckedAt,omitempty"`
-		Status             string                              `json:"status"`
-		ImageRefs          []string                            `json:"imageRefs,omitempty"`
-		UpdatedImageRefs   []string                            `json:"updatedImageRefs,omitempty"`
-		NotPulledImageRefs []string                            `json:"notPulledImageRefs,omitempty"`
-		ImageCount         int                                 `json:"imageCount"`
-		CheckedImageCount  int                                 `json:"checkedImageCount"`
-		ImagesWithUpdates  int                                 `json:"imagesWithUpdates"`
-		ImagesNotPulled    int                                 `json:"imagesNotPulled"`
-		ErrorCount         int                                 `json:"errorCount"`
-		HasUpdate          bool                                `json:"hasUpdate"`
-	}
-
 	ProjectDetailsOptions struct {
 		IncludeComposeContent  bool
 		IncludeEnvState        bool
 		IncludeIncludeFiles    bool
 		IncludeServiceConfigs  bool
 		IncludeRuntimeServices bool
-		IncludeUpdateInfo      bool
 	}
 
 	CreateProjectResponse struct {
@@ -244,7 +221,6 @@ type (
 		ActivityID         *string                    `json:"activityId,omitempty" readOnly:"true"`
 		LastSyncCommit     *string                    `json:"lastSyncCommit,omitempty" readOnly:"true"`
 		GitOpsManagedBy    *string                    `json:"gitOpsManagedBy,omitempty" readOnly:"true"`
-		UpdateInfo         *ProjectUpdateInfo         `json:"updateInfo,omitempty" readOnly:"true"`
 		ArchivedAt         *time.Time                 `json:"archivedAt,omitempty" readOnly:"true"`
 		ConfigurationError *ProjectConfigurationError `json:"configurationError,omitempty" readOnly:"true"`
 		EnvironmentTag
@@ -281,7 +257,6 @@ type (
 		RunningCount    int                          `json:"runningCount" readOnly:"true"`
 		ServiceCount    int                          `json:"serviceCount" readOnly:"true"`
 
-		IsDiscovered      bool `json:"isDiscovered,omitzero" readOnly:"true"`
 		IsArchived        bool `json:"isArchived" readOnly:"true"`
 		HasBuildDirective bool `json:"hasBuildDirective,omitzero" readOnly:"true"`
 		RedeployDisabled  bool `json:"redeployDisabled,omitzero" readOnly:"true"`
@@ -298,8 +273,6 @@ type (
 		StoppedProjects  int `json:"stoppedProjects"`
 		TotalProjects    int `json:"totalProjects"`
 		ArchivedProjects int `json:"archivedProjects"`
-
-		UpdatesAvailable int `json:"updatesAvailable" doc:"Active projects with a pending image update"`
 	}
 
 	ComposeCache[T any] interface {
@@ -609,7 +582,6 @@ func AllProjectDetails() ProjectDetailsOptions {
 		IncludeIncludeFiles:    true,
 		IncludeServiceConfigs:  true,
 		IncludeRuntimeServices: true,
-		IncludeUpdateInfo:      true,
 	}
 }
 

@@ -48,9 +48,6 @@ func (m *Module) RegisterRoutes(api huma.API) {
 	handlerutil.RegisterSecured(api,
 		handlerutil.Operation("get-podman-info", http.MethodGet, podmanPath+"/info", "Get Podman info", "", podmanTag),
 		authz.PermPodmanRead, h.GetInfo)
-	handlerutil.RegisterSecured(api,
-		handlerutil.Operation("run-podman-autoupdate", http.MethodPost, podmanPath+"/autoupdate", "Run Podman auto-update", "Run podman auto-update through the REST API or its systemd unit", podmanTag),
-		authz.PermPodmanAutoUpdate, h.RunAutoUpdate)
 
 	pods.RegisterRoutes(api, pods.NewHandler(m.service.pods, h.audit))
 	quadlets.RegisterRoutes(api, quadlets.NewHandler(m.service.quadlets, h.audit))

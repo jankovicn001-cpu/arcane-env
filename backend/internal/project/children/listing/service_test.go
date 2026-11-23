@@ -64,7 +64,7 @@ func TestCalculateProjectStatus(t *testing.T) {
 }
 
 func TestStatusCounts_FallsBackToStoredStatus(t *testing.T) {
-	svc := New(func(context.Context) ([]container.Summary, error) { return nil, errors.New("docker unavailable") }, nil, nil)
+	svc := New(func(context.Context) ([]container.Summary, error) { return nil, errors.New("docker unavailable") })
 
 	counts := StatusCounts([]types.ProjectRecord{
 		{Status: types.ProjectStatusRunning},

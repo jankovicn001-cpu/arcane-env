@@ -20,14 +20,6 @@ export function arcaneImageRegistryOptions() {
 	];
 }
 
-export function arcaneUpdateCheckRegistryOptions() {
-	return [
-		{ value: 'auto', label: m.auto() },
-		...arcaneImageRegistryOptions(),
-		{ value: 'public.ecr.aws', label: m.registry_amazon_ecr_public() }
-	];
-}
-
 function arcaneRegistryHost(registry: string): string {
 	return registry === 'docker.io' ? 'docker.io' : 'ghcr.io';
 }
@@ -39,12 +31,6 @@ export function arcaneToolsImage(registry: string): string {
 export function arcaneTrivyDbImages(registry: string): string[] {
 	const host = arcaneRegistryHost(registry);
 	return [`${host}/getarcaneapp/trivy-db:2`, `${host}/getarcaneapp/trivy-java-db:1`, `${host}/getarcaneapp/trivy-checks:1`];
-}
-
-export function arcaneUpdateCheckImage(registry: string, isLocalEnvironment: boolean): string | null {
-	if (registry === 'auto') return null;
-	const host = registry === 'public.ecr.aws' ? registry : arcaneRegistryHost(registry);
-	return `${host}/getarcaneapp/${isLocalEnvironment ? 'manager' : 'agent'}`;
 }
 
 export function buildImageReference(host: string, namespace: string, repositoryName: string, tag: string): string {

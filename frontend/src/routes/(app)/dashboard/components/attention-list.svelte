@@ -10,17 +10,7 @@
 	import { sortAttentionItems, type AttentionItem, type AttentionSeverity, type AttentionSort } from '../overview.helpers';
 	import DashboardPanel from './dashboard-panel.svelte';
 
-	let {
-		items,
-		loading,
-		failed,
-		onAction
-	}: {
-		items: AttentionItem[];
-		loading: boolean;
-		failed: boolean;
-		onAction: (item: AttentionItem) => void;
-	} = $props();
+	let { items, loading, failed }: { items: AttentionItem[]; loading: boolean; failed: boolean } = $props();
 
 	const isTablet = new IsTablet();
 	let sort = $state<AttentionSort>('impact');
@@ -75,19 +65,9 @@
 							<span class="block text-xs wrap-break-word whitespace-normal text-muted-foreground sm:truncate">{item.detail}</span>
 						{/if}
 					</span>
-					{#if item.target.kind === 'link'}
-						<a href={item.target.href} class="touch-hit relative text-sm font-medium text-primary-text hover:underline"
-							>{item.actionLabel}</a
-						>
-					{:else}
-						<button
-							type="button"
-							class="touch-hit relative text-sm font-medium text-primary-text hover:underline"
-							onclick={() => onAction(item)}
-						>
-							{item.actionLabel}
-						</button>
-					{/if}
+					<a href={item.href} class="touch-hit relative text-sm font-medium text-primary-text hover:underline"
+						>{item.actionLabel}</a
+					>
 				</li>
 			{/each}
 		</ul>

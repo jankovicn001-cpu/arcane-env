@@ -32,7 +32,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/session"
 	"getarcane.dev/arcane/v3/internal/settings"
 	userdomain "getarcane.dev/arcane/v3/internal/user"
-	"getarcane.dev/arcane/v3/pkg/activity"
 	"getarcane.dev/arcane/v3/pkg/authz"
 	"getarcane.dev/arcane/v3/pkg/cookie"
 	"getarcane.dev/arcane/v3/pkg/handlerutil"
@@ -789,17 +788,6 @@ func tryAgentAuth(ctx huma.Context, cfg *config.Config) (huma.Context, bool) {
 	authenticatedUser := createAgentSudoUser()
 	applyProxiedIconCatalog(ctx, authenticatedUser)
 	authCtx := setUserInContext(ctx.Context(), authenticatedUser, agentPermissions(ctx.Context(), ctx.Header(middleware.HeaderForwardedPermissions)))
-	updatePath := strings.Contains(ctx.URL().Path, "/containers/") && strings.HasSuffix(ctx.URL().Path, "/update")
-	if ctx.Method() == http.MethodPost && updatePath {
-		if initiatorID := strings.TrimSpace(ctx.Header(middleware.HeaderUpdateInitiatorID)); initiatorID != "" {
-			initiator := types.ActivityStartedBy{
-				UserID:      initiatorID,
-				Username:    strings.TrimSpace(ctx.Header(middleware.HeaderUpdateInitiatorName)),
-				DisplayName: strings.TrimSpace(ctx.Header(middleware.HeaderUpdateInitiatorDisplayName)),
-			}
-			authCtx = activity.WithUpdateInitiator(authCtx, initiator)
-		}
-	}
 	return huma.WithContext(ctx, authCtx), true
 }
 

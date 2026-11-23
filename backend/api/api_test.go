@@ -255,7 +255,6 @@ func TestSetupAPIForSpec_PublicRoutesOverrideSecurity(t *testing.T) {
 		{path: "/agents/{id}/settings/public", method: "GET"},
 		{path: "/agents/pair", method: "POST"},
 		{path: "/agents/enroll", method: "POST"},
-		{path: "/version", method: "GET"},
 		{path: "/app/version", method: "GET"},
 	}
 

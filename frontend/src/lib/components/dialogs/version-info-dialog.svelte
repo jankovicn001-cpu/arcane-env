@@ -6,7 +6,7 @@
 	import { CopyButton } from '#lib/components/ui/copy-button/index.js';
 	import { ResponsiveDialog } from '#lib/components/ui/responsive-dialog/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
-	import { ExternalLinkIcon, GithubIcon, BookOpenIcon } from '#lib/icons/index.js';
+	import { GithubIcon, BookOpenIcon } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import settingsStore from '#lib/stores/config-store.svelte.js';
 	import { GLOBAL_SCOPE } from '#lib/types/role.js';
@@ -38,8 +38,7 @@
 		svelteKitVersion: '3.0.0-next.1',
 		buildTime: '2026-04-15T12:00:00Z',
 		enabledFeatures: ['autologin'],
-		currentDigest: 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-		releaseUrl: 'https://github.com/getarcaneapp/arcane/releases/tag/v1.2.4'
+		currentDigest: 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
 	} as VersionInfo;
 
 	const displayInfo = $derived(debugMode ? mockVersionInfo : versionInfo);
@@ -128,16 +127,6 @@
 
 	{#snippet footer()}
 		<div class="flex w-full flex-col gap-2 sm:flex-row sm:justify-end">
-			{#if displayInfo.releaseUrl}
-				<ArcaneButton
-					action="base"
-					tone="outline"
-					class="gap-2"
-					onclick={() => window.open(displayInfo.releaseUrl, '_blank')}
-					icon={ExternalLinkIcon}
-					customLabel={m.version_info_view_release()}
-				/>
-			{/if}
 			<ArcaneButton
 				action="base"
 				tone="outline"

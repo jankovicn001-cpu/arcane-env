@@ -14,7 +14,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/event"
 	"getarcane.dev/arcane/v3/internal/scheduler/schedule"
 	"getarcane.dev/arcane/v3/internal/settings"
-	"getarcane.dev/arcane/v3/internal/updater"
 	"getarcane.dev/types/v3"
 )
 
@@ -24,7 +23,6 @@ type (
 		activityService *activity.ActivityService
 		buildService    *build.BuildService
 		settingsService *settings.SettingsService
-		updaterService  *updater.UpdaterService
 	}
 
 	EventCleanupJobParams struct {
@@ -34,7 +32,6 @@ type (
 		ActivityService *activity.ActivityService
 		BuildService    *build.BuildService
 		SettingsService *settings.SettingsService
-		UpdaterService  *updater.UpdaterService
 	}
 )
 
@@ -48,7 +45,6 @@ func NewEventCleanupJob(p EventCleanupJobParams) *EventCleanupJob {
 		activityService: p.ActivityService,
 		buildService:    p.BuildService,
 		settingsService: p.SettingsService,
-		updaterService:  p.UpdaterService,
 	}
 }
 
@@ -93,16 +89,6 @@ func (j *EventCleanupJob) Run(ctx context.Context) (types.SchedulerOutcome, erro
 			"jobName", EventCleanupJobName,
 			"retentionDays", buildRetentionDays,
 			"deleted", deletedBuilds)
-	}
-
-	updateRetentionDays := j.settingsService.GetIntSetting(ctx, "activityHistoryRetentionDays")
-	if deletedUpdates, err := j.updaterService.PruneHistory(ctx, updateRetentionDays); err != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("prune auto-update history: %w", err))
-	} else {
-		slog.InfoContext(ctx, "Auto-update history cleanup completed successfully",
-			"jobName", EventCleanupJobName,
-			"retentionDays", updateRetentionDays,
-			"deleted", deletedUpdates)
 	}
 
 	if cleanupErr != nil {

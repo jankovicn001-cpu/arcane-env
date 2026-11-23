@@ -19,10 +19,8 @@ import (
 	"kit.getarcane.app"
 	"kit.getarcane.app/acfs"
 	acfstypes "kit.getarcane.app/acfs/types"
-	updaterlabels "kit.getarcane.app/updater/labels"
 
 	"getarcane.dev/arcane/v3/pkg/iconcatalog"
-	"getarcane.dev/arcane/v3/pkg/imageref"
 	"getarcane.dev/arcane/v3/pkg/selfcontainer"
 	"getarcane.dev/types/v3"
 )
@@ -498,29 +496,16 @@ func NormalizeProjectTagColor(color types.ProjectTagColor) (types.ProjectTagColo
 
 func applyServiceLabelMetadata(project *composetypes.Project) error {
 	blockLabels := func(block any) (map[string]string, error) {
-		labels, err := updaterMetadataLabels(block)
-		if err != nil {
-			return nil, fmt.Errorf("x-arcane.updater: %w", err)
-		}
 		arcane, _ := kit.AsStringMap(block)
-		for _, metadata := range []struct {
-			key   string
-			label string
-		}{
-			{key: "hidden", label: selfcontainer.HiddenResourceLabel},
-			{key: "update-check", label: imageref.UpdateCheckLabel},
-		} {
-			value, present := arcane[metadata.key]
-			if !present {
-				continue
-			}
-			enabled, boolErr := metadataBool(value)
-			if boolErr != nil {
-				return nil, fmt.Errorf("x-arcane.%s: %w", metadata.key, boolErr)
-			}
-			labels[metadata.label] = strconv.FormatBool(enabled)
+		value, present := arcane["hidden"]
+		if !present {
+			return map[string]string{}, nil
 		}
-		return labels, nil
+		hidden, err := metadataBool(value)
+		if err != nil {
+			return nil, fmt.Errorf("x-arcane.hidden: %w", err)
+		}
+		return map[string]string{selfcontainer.HiddenResourceLabel: strconv.FormatBool(hidden)}, nil
 	}
 
 	defaults, err := blockLabels(project.Extensions[arcaneBlockKey])
@@ -543,69 +528,6 @@ func applyServiceLabelMetadata(project *composetypes.Project) error {
 		project.Services[name] = service
 	}
 	return nil
-}
-
-func updaterMetadataLabels(block any) (map[string]string, error) {
-	arcane, ok := kit.AsStringMap(block)
-	if !ok {
-		return map[string]string{}, nil
-	}
-	raw, present := arcane["updater"]
-	if !present {
-		return map[string]string{}, nil
-	}
-	config, ok := kit.AsStringMap(raw)
-	if !ok {
-		return nil, errors.New("expected an updater mapping")
-	}
-	result := make(map[string]string, len(config))
-	for key, value := range config {
-		if key == "enabled" {
-			enabled, err := metadataBool(value)
-			if err != nil {
-				return nil, err
-			}
-			result[updaterlabels.LabelUpdater] = strconv.FormatBool(enabled)
-			continue
-		}
-		if key == "delay" {
-			hours, err := metadataHours(value)
-			if err != nil {
-				return nil, err
-			}
-			result[imageref.UpdateDelayLabel] = strconv.Itoa(hours)
-			continue
-		}
-		var label string
-		switch key {
-		case "strategy":
-			label = updaterlabels.LabelUpdateStrategy
-		case "constraint":
-			label = updaterlabels.LabelUpdateConstraint
-		case "tag-pattern":
-			label = updaterlabels.LabelUpdateTagPattern
-		default:
-			return nil, fmt.Errorf("unknown updater option %q", key)
-		}
-		text, localOk := value.(string)
-		if !localOk {
-			return nil, fmt.Errorf("updater %s must be a string", key)
-		}
-		text = strings.TrimSpace(text)
-		if key == "strategy" && text != "auto" && text != "tag" && text != "digest" {
-			return nil, fmt.Errorf("unknown updater strategy %q", text)
-		}
-		result[label] = text
-	}
-	return result, nil
-}
-
-func metadataHours(value any) (int, error) {
-	hours, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value)))
-	if err != nil || hours < 0 || hours > imageref.MaxUpdateDelayHours {
-		return 0, fmt.Errorf("updater delay must be a whole number of hours between 0 and %d", imageref.MaxUpdateDelayHours)
-	}
-	return hours, nil
 }
 
 func metadataBool(value any) (bool, error) {

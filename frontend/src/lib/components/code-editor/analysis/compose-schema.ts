@@ -72,15 +72,6 @@ const ARCANE_BLOCK_COMPLETIONS: ArcaneCompletionSpec[] = [
 		label: 'tags',
 		detail: 'Arcane project tags',
 		info: 'A tag or list of tags used to group and filter projects. Compose-defined tags are read-only in Arcane.'
-	},
-	{
-		label: 'update-check',
-		get detail() {
-			return m.editor_compose_update_check_detail();
-		},
-		get info() {
-			return m.editor_compose_update_check_info();
-		}
 	}
 ];
 
@@ -116,15 +107,6 @@ const ARCANE_SERVICE_BLOCK_COMPLETIONS: ArcaneCompletionSpec[] = [
 		label: 'icon-dark',
 		detail: 'Arcane service icon for light theme',
 		info: 'Dark service icon URL or catalog slug used in light theme.'
-	},
-	{
-		label: 'update-check',
-		get detail() {
-			return m.editor_compose_update_check_detail();
-		},
-		get info() {
-			return m.editor_compose_update_check_info();
-		}
 	}
 ];
 
@@ -142,29 +124,6 @@ const ARCANE_TAG_COMPLETIONS: ArcaneCompletionSpec[] = [
 ];
 
 const ARCANE_TAG_COLORS = ['gray', 'purple', 'blue', 'green', 'yellow', 'orange', 'red', 'pink'];
-
-function getUpdaterCompletionSpecs(): ArcaneCompletionSpec[] {
-	return [
-		{ label: 'enabled', detail: m.editor_compose_updater_enabled_detail(), info: m.editor_compose_updater_enabled_info() },
-		{ label: 'strategy', detail: m.editor_compose_updater_strategy_detail(), info: m.editor_compose_updater_strategy_info() },
-		{
-			label: 'constraint',
-			detail: m.editor_compose_updater_constraint_detail(),
-			info: m.editor_compose_updater_constraint_info()
-		},
-		{
-			label: 'tag-pattern',
-			detail: m.editor_compose_updater_tag_pattern_detail(),
-			info: m.editor_compose_updater_tag_pattern_info()
-		}
-	];
-}
-
-function getUpdaterPathIndex(path: Array<string | number>): number {
-	if (isRootArcanePath(path.slice(0, 1)) && path[1] === 'updater') return 1;
-	if (isServiceArcanePath(path.slice(0, 3)) && path[3] === 'updater') return 3;
-	return -1;
-}
 
 function asSchemaObject(value: unknown): SchemaObject | null {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -348,12 +307,9 @@ function toArcaneCompletion(spec: ArcaneCompletionSpec): Completion {
 
 function getArcaneCompletionOptionsForPath(path: Array<string | number>, prefix = ''): Completion[] {
 	const normalizedPrefix = prefix.toLowerCase();
-	const updaterPathIndex = getUpdaterPathIndex(path);
 	let specs: ArcaneCompletionSpec[] = [];
 
-	if (updaterPathIndex >= 0 && path.length === updaterPathIndex + 1) {
-		specs = getUpdaterCompletionSpecs();
-	} else if (isRootPath(path)) {
+	if (isRootPath(path)) {
 		specs = ARCANE_ROOT_EXTENSION_COMPLETIONS;
 	} else if (isRootArcanePath(path)) {
 		specs = ARCANE_BLOCK_COMPLETIONS;
@@ -363,10 +319,6 @@ function getArcaneCompletionOptionsForPath(path: Array<string | number>, prefix 
 		specs = ARCANE_SERVICE_BLOCK_COMPLETIONS;
 	} else if (path.length === 3 && path[0] === 'x-arcane' && path[1] === 'tags' && typeof path[2] === 'number') {
 		specs = ARCANE_TAG_COMPLETIONS;
-	}
-
-	if (isRootArcanePath(path) || isServiceArcanePath(path)) {
-		specs = [...specs, { label: 'updater', detail: m.editor_compose_updater_detail(), info: m.editor_compose_updater_info() }];
 	}
 
 	return specs
@@ -398,12 +350,6 @@ const ARCANE_SCHEMA_DOCS: Record<string, SchemaDoc> = {
 			return m.editor_compose_hidden_info();
 		}
 	},
-	'x-arcane.update-check': {
-		title: 'x-arcane.update-check',
-		get description() {
-			return m.editor_compose_update_check_info();
-		}
-	},
 	'x-arcane.urls': {
 		title: 'x-arcane.urls',
 		description: 'Additional project URLs (for example docs, homepage, or dashboards).'
@@ -432,8 +378,6 @@ function getServiceArcaneSchemaDoc(path: Array<string | number>): SchemaDoc | nu
 	if (path.length === 3) return ARCANE_SCHEMA_DOCS['services.<name>.x-arcane'] ?? null;
 	if (path.length === 4 && path[3] === 'hidden')
 		return { ...ARCANE_SCHEMA_DOCS['x-arcane.hidden'], title: 'services.<name>.x-arcane.hidden' };
-	if (path.length === 4 && path[3] === 'update-check')
-		return { ...ARCANE_SCHEMA_DOCS['x-arcane.update-check'], title: 'services.<name>.x-arcane.update-check' };
 	if (path.length !== 4 || !['icon', 'icon-light', 'icon-dark'].includes(String(path[3]))) return null;
 	const title = `services.<name>.x-arcane.${String(path[3])}`;
 	if (path[3] === 'icon') {
@@ -446,30 +390,10 @@ function getServiceArcaneSchemaDoc(path: Array<string | number>): SchemaDoc | nu
 }
 
 function getArcaneSchemaDocForPath(path: Array<string | number>): SchemaDoc | null {
-	const updaterPathIndex = getUpdaterPathIndex(path);
-	if (updaterPathIndex >= 0) {
-		const title = updaterPathIndex === 1 ? 'x-arcane.updater' : 'services.<name>.x-arcane.updater';
-		if (path.length === updaterPathIndex + 1) {
-			return { title, description: m.editor_compose_updater_info() };
-		}
-		if (path.length === updaterPathIndex + 2) {
-			const field = getUpdaterCompletionSpecs().find((spec) => spec.label === path[updaterPathIndex + 1]);
-			if (field)
-				return {
-					title: `${title}.${field.label}`,
-					description: field.info,
-					...(field.label === 'strategy' ? { defaultValue: 'digest' } : {})
-				};
-		}
-		return null;
-	}
 	if (isServiceArcanePath(path.slice(0, 3))) return getServiceArcaneSchemaDoc(path);
 	if (path[0] !== 'x-arcane') return null;
 	if (path.length === 1) return ARCANE_SCHEMA_DOCS['x-arcane'] ?? null;
-	if (
-		path.length === 2 &&
-		['icon', 'icon-light', 'icon-dark', 'urls', 'tags', 'hidden', 'update-check'].includes(String(path[1]))
-	)
+	if (path.length === 2 && ['icon', 'icon-light', 'icon-dark', 'urls', 'tags', 'hidden'].includes(String(path[1])))
 		return ARCANE_SCHEMA_DOCS[`x-arcane.${path[1]}`] ?? null;
 	if (path.length === 4 && path[1] === 'tags' && typeof path[2] === 'number') {
 		return ARCANE_SCHEMA_DOCS[`x-arcane.tags[].${String(path[3])}`] ?? null;
@@ -575,23 +499,11 @@ export function getCompletionOptionsForPath(
 export function getEnumValueCompletions(schema: SchemaObject | null, path: Array<string | number>): Completion[] {
 	const values = new Set<string>();
 	if (
-		(path.length === 2 && path[0] === 'x-arcane' && ['hidden', 'update-check'].includes(String(path[1]))) ||
-		(path.length === 4 && isServiceArcanePath(path.slice(0, 3)) && ['hidden', 'update-check'].includes(String(path[3])))
+		(path.length === 2 && path[0] === 'x-arcane' && path[1] === 'hidden') ||
+		(path.length === 4 && isServiceArcanePath(path.slice(0, 3)) && path[3] === 'hidden')
 	) {
 		values.add('true');
 		values.add('false');
-	}
-	const updaterPathIndex = getUpdaterPathIndex(path);
-	if (updaterPathIndex >= 0 && path.length === updaterPathIndex + 2) {
-		const field = path[updaterPathIndex + 1];
-		if (field === 'strategy') {
-			values.add('auto');
-			values.add('digest');
-			values.add('tag');
-		} else if (field === 'enabled') {
-			values.add('true');
-			values.add('false');
-		}
 	}
 	if (getArcaneSchemaDocForPath(path)?.title === 'x-arcane.tags[].color') {
 		for (const color of ARCANE_TAG_COLORS) values.add(color);

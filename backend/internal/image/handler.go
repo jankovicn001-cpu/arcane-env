@@ -23,7 +23,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/common"
 	"getarcane.dev/arcane/v3/internal/database"
 	"getarcane.dev/arcane/v3/internal/docker"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/settings"
 	"getarcane.dev/arcane/v3/internal/upload"
 	activitylib "getarcane.dev/arcane/v3/pkg/activity"
@@ -34,14 +33,13 @@ import (
 
 type (
 	ImageHandler struct {
-		dockerService      *docker.DockerClientService
-		imageService       *ImageService
-		imageUpdateService *imageupdate.ImageUpdateService
-		settingsService    *settings.SettingsService
-		buildService       *build.BuildService
-		activityService    *activity.ActivityService
-		uploadService      *upload.UploadService
-		appCtx             context.Context
+		dockerService   *docker.DockerClientService
+		imageService    *ImageService
+		settingsService *settings.SettingsService
+		buildService    *build.BuildService
+		activityService *activity.ActivityService
+		uploadService   *upload.UploadService
+		appCtx          context.Context
 	}
 
 	ListImagesOutput struct {
@@ -54,7 +52,6 @@ type (
 		Sort          string `query:"sort" doc:"Column to sort by"`
 		Order         string `query:"order" default:"asc" doc:"Sort direction (asc or desc)"`
 		InUse         string `query:"inUse" doc:"Filter by in-use status (true/false)"`
-		Updates       string `query:"updates" doc:"Filter by update availability (true/false)"`
 		Hardened      string `query:"hardened" doc:"Filter by Docker Hardened Image status (true/false or a support status)"`
 		Label         string `query:"label" doc:"Filter by label key or key=value"`
 		Start         int    `query:"start" default:"0" doc:"Start index for pagination"`
@@ -141,9 +138,6 @@ func (h *ImageHandler) ListImages(ctx context.Context, input *ListImagesInput) (
 	params := handlerutil.PaginationParams(input.Start, cmp.Or(input.Limit, 20), input.Sort, input.Order, input.Search)
 	if input.InUse != "" {
 		params.Filters["inUse"] = input.InUse
-	}
-	if input.Updates != "" {
-		params.Filters["updates"] = input.Updates
 	}
 	if input.Hardened != "" {
 		params.Filters["hardened"] = input.Hardened

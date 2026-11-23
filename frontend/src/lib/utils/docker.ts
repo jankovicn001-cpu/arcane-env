@@ -1,9 +1,7 @@
 import { m } from '#lib/paraglide/messages.js';
 import type { ContainerDetails, ContainerStats, ContainerSummary } from '#lib/types/container.js';
 import type { Environment, EnvironmentStatus } from '#lib/types/environment.js';
-import type { ProjectUpdateInfo } from '#lib/types/project.js';
 import type { SwarmServiceModeName, SwarmServiceModeSpec } from '#lib/types/swarm.js';
-import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 import type { VulnerabilityScanSummary } from '#lib/types/vulnerability.js';
 import { instantEpochMilliseconds } from '#lib/utils/formatting.js';
 
@@ -124,64 +122,6 @@ export function parseImageRef(imageRef: string): { repo: string; tag: string } {
 		};
 	}
 	return { repo: namedRef, tag: 'latest' };
-}
-
-type ProjectUpdateStatus = ProjectUpdateInfo['status'];
-export type ProjectUpdateBadgeVariant = 'blue' | 'green' | 'gray' | 'red';
-
-export function getProjectUpdateStatus(updateInfo?: ProjectUpdateInfo): ProjectUpdateStatus {
-	return updateInfo?.status ?? 'unknown';
-}
-
-const projectUpdateDisplay = new Map<ProjectUpdateStatus, { label: () => string; variant: ProjectUpdateBadgeVariant }>([
-	['has_update', { label: m.images_has_updates, variant: 'blue' }],
-	['up_to_date', { label: m.image_update_up_to_date_title, variant: 'green' }],
-	['not_pulled', { label: m.image_update_not_pulled_title, variant: 'blue' }],
-	['error', { label: m.common_error, variant: 'red' }]
-]);
-
-export function getProjectUpdateText(updateInfo?: ProjectUpdateInfo): string {
-	return (projectUpdateDisplay.get(getProjectUpdateStatus(updateInfo))?.label ?? m.image_update_status_unknown)();
-}
-
-export function getProjectUpdateVariant(updateInfo?: ProjectUpdateInfo): ProjectUpdateBadgeVariant {
-	return projectUpdateDisplay.get(getProjectUpdateStatus(updateInfo))?.variant ?? 'gray';
-}
-
-export function getProjectUpdateTooltip(updateInfo?: ProjectUpdateInfo): string | undefined {
-	switch (getProjectUpdateStatus(updateInfo)) {
-		case 'not_pulled':
-			return m.image_update_not_pulled_desc();
-		case 'error':
-			return m.image_update_check_failed_title();
-		case 'unknown':
-			return m.image_update_click_to_check();
-		default:
-			return undefined;
-	}
-}
-
-const updatesFilter = 'has_update';
-
-export function ensureUpdatesFilter<T extends SearchPaginationSortRequest>(options: T): T {
-	return {
-		...options,
-		filters: {
-			...options.filters,
-			updates: updatesFilter
-		}
-	};
-}
-
-export function ensureStandaloneContainerUpdatesFilter<T extends SearchPaginationSortRequest>(options: T): T {
-	const next = ensureUpdatesFilter(options);
-	return {
-		...next,
-		filters: {
-			...next.filters,
-			standalone: true
-		}
-	};
 }
 
 export function extractErrorMessage(data: unknown, fallbackMessage: string): string {

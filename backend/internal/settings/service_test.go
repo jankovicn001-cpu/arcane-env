@@ -308,7 +308,7 @@ func TestSettingsServiceSettingsSnapshotFiltersByScope(t *testing.T) {
 	require.NotContains(t, authentication, "analyticsEnabled")
 
 	manager := keys(SettingScopeManager)
-	require.Subset(t, manager, []string{"analyticsEnabled", "updateCheckEnabled", "apnsEnabled", "experimentalFeaturesEnabled"})
+	require.Subset(t, manager, []string{"analyticsEnabled", "apnsEnabled", "experimentalFeaturesEnabled"})
 	require.NotContains(t, manager, "oidcEnabled")
 	require.NotContains(t, manager, "dockerHost")
 
@@ -627,7 +627,7 @@ func TestSettingsService_ReadOnlyGate(t *testing.T) {
 	err = svc.UpdateSettings(ctx, types.SettingsUpdate{"baseServerUrl": "https://changed.example"})
 	require.ErrorIs(t, err, common.ErrValidation)
 	require.ErrorContains(t, err, "UI configuration is disabled")
-	err = svc.UpdateSettingValues(ctx, []types.SettingUpdate{{Key: "pollingInterval", Value: "*/10 * * * *"}})
+	err = svc.UpdateSettingValues(ctx, []types.SettingUpdate{{Key: "scheduledPruneInterval", Value: "*/10 * * * *"}})
 	require.ErrorIs(t, err, common.ErrValidation)
 
 	err = svc.UpdateSettings(ctx, types.SettingsUpdate{"baseServerUrl": "http://localhost"})
@@ -670,12 +670,12 @@ func TestSettingsService_UpdateSettingRejectsInvalidCronBeforePersistence(t *tes
 	svc, err := newSettingsServiceForTest(t, ctx, db)
 	require.NoError(t, err)
 
-	require.NoError(t, svc.UpdateSetting(ctx, "pollingInterval", "*/5 * * * *"))
-	require.Error(t, svc.UpdateSetting(ctx, "pollingInterval", "not a cron schedule"))
-	require.Error(t, svc.UpdateSetting(ctx, "pollingInterval", "0 */5 * * * *"))
+	require.NoError(t, svc.UpdateSetting(ctx, "scheduledPruneInterval", "*/5 * * * *"))
+	require.Error(t, svc.UpdateSetting(ctx, "scheduledPruneInterval", "not a cron schedule"))
+	require.Error(t, svc.UpdateSetting(ctx, "scheduledPruneInterval", "0 */5 * * * *"))
 
 	var setting SettingVariable
-	require.NoError(t, svc.db.WithContext(ctx).Where("key = ?", "pollingInterval").First(&setting).Error)
+	require.NoError(t, svc.db.WithContext(ctx).Where("key = ?", "scheduledPruneInterval").First(&setting).Error)
 	require.Equal(t, "*/5 * * * *", setting.Value)
 }
 
@@ -811,14 +811,14 @@ func TestSettingsServiceActorNotifiesSubscriberOnceForMultipleMatchingKeys(t *te
 
 	var calls atomic.Int32
 	notified := make(chan []types.SettingUpdate, 1)
-	svc.SubscribeSettingsChanges([]string{"pollingEnabled", "pollingInterval"}, func(updates []types.SettingUpdate) {
+	svc.SubscribeSettingsChanges([]string{"scheduledPruneEnabled", "scheduledPruneInterval"}, func(updates []types.SettingUpdate) {
 		calls.Add(1)
 		notified <- updates
 	})
 
 	err = svc.UpdateSettings(ctx, types.SettingsUpdate{
-		"pollingEnabled":  "false",
-		"pollingInterval": "*/5 * * * *",
+		"scheduledPruneEnabled":  "true",
+		"scheduledPruneInterval": "*/5 * * * *",
 	})
 	require.NoError(t, err)
 	require.Len(t, <-notified, 2)
@@ -839,27 +839,6 @@ func TestSettingsServiceActorDoesNotPublishSensitiveValues(t *testing.T) {
 	require.NoError(t, err)
 	waitForSettingsNotifications(t, svc)
 	require.Zero(t, calls.Load())
-}
-
-func TestSettingsServiceActorSerializesContainerExclusionUpdates(t *testing.T) {
-	ctx := t.Context()
-	db := setupSettingsTestDB(t)
-	svc, err := newSettingsServiceForTest(t, ctx, db)
-	require.NoError(t, err)
-
-	start := make(chan struct{})
-	results := make(chan error, 2)
-	for _, name := range []string{"api", "worker"} {
-		go func() {
-			<-start
-			results <- svc.SetContainerAutoUpdateExclusion(ctx, name, true)
-		}()
-	}
-	close(start)
-
-	require.NoError(t, <-results)
-	require.NoError(t, <-results)
-	require.ElementsMatch(t, []string{"api", "worker"}, strings.Split(svc.GetStringSetting(ctx, "autoUpdateExcludedContainers"), ","))
 }
 
 func BenchmarkSettingsService_GetSettings(b *testing.B) {

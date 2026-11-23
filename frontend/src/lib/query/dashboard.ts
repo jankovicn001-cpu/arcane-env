@@ -7,7 +7,6 @@ import { eventService } from '#lib/services/event-service.js';
 import { imageService } from '#lib/services/image-service.js';
 import { jobScheduleService } from '#lib/services/job-schedule-service.js';
 import { podmanService } from '#lib/services/podman-service.js';
-import { projectService } from '#lib/services/project-service.js';
 import { systemService } from '#lib/services/system-service.js';
 import { vulnerabilityService } from '#lib/services/vulnerability-service.js';
 import type { EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
@@ -16,7 +15,6 @@ import type { Event } from '#lib/types/event.js';
 import type { ImageUsageCounts } from '#lib/types/image.js';
 import type { JobListResponse } from '#lib/types/jobschedule.js';
 import type { PodmanStatus } from '#lib/types/podman.js';
-import type { ProjectStatusCounts } from '#lib/types/project.js';
 import type { SystemDiskUsage } from '#lib/types/system.js';
 import type { VersionInfo } from '#lib/types/version.js';
 import type { EnvironmentVulnerabilitySummary } from '#lib/types/vulnerability.js';
@@ -27,8 +25,7 @@ export const EMPTY_CONTAINER_COUNTS: ContainerStatusCounts = {
 	runningContainers: 0,
 	stoppedContainers: 0,
 	totalContainers: 0,
-	unhealthyContainers: 0,
-	updatesAvailable: 0
+	unhealthyContainers: 0
 };
 
 export const EMPTY_IMAGE_COUNTS: ImageUsageCounts = {
@@ -59,18 +56,6 @@ export function dashboardContainerCountsQuery(environments: EnvironmentRef[]) {
 				environments,
 				(scope, config) => containerService.getContainerStatusCountsForEnvironment(scope, config),
 				EMPTY_CONTAINER_COUNTS
-			)
-	});
-}
-
-export function dashboardProjectCountsQuery(environments: EnvironmentRef[]) {
-	return queryOptions({
-		queryKey: queryKeys.dashboard.summary('projects', environmentScope(environments), 'status-counts'),
-		queryFn: () =>
-			sumAcrossEnvironments<Pick<ProjectStatusCounts, 'updatesAvailable'>>(
-				environments,
-				(scope, config) => projectService.getProjectStatusCountsForEnvironment(scope, config),
-				{ updatesAvailable: 0 }
 			)
 	});
 }

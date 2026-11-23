@@ -10,23 +10,27 @@
 	import IfPermitted from '#lib/components/if-permitted.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
-	import { UserIcon, TrashIcon, EditIcon } from '#lib/icons/index.js';
+	import { CommunityIcon, UserIcon, TrashIcon, EditIcon } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { userService } from '#lib/services/user-service.js';
 	import settingsStore from '#lib/stores/config-store.svelte.js';
 	import type { Paginated } from '#lib/types/base.js';
+	import type { Environment, EnvironmentGroupRef } from '#lib/types/environment.js';
 	import type { Role } from '#lib/types/role.js';
 	import { BUILT_IN_ROLE_ADMIN, BUILT_IN_ROLE_EDITOR, BUILT_IN_ROLE_DEPLOYER, BUILT_IN_ROLE_VIEWER } from '#lib/types/role.js';
 	import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 	import type { User } from '#lib/types/user.js';
 	import { bulkConfirmAndRun, confirmAndRun } from '#lib/utils/bulk-actions.js';
+	import { GLOBAL_ENVIRONMENT_OPTION_ID, roleScopeLabel, roleScopeOptionId } from '#lib/utils/options.js';
 
 	let {
 		users,
 		selectedIds = $bindable(),
 		requestOptions = $bindable(),
 		roles,
+		environments,
+		groups,
 		onRetry,
 		onEditUser
 	}: {
@@ -34,6 +38,8 @@
 		selectedIds: string[];
 		requestOptions: SearchPaginationSortRequest;
 		roles: Role[];
+		environments: Environment[];
+		groups: EnvironmentGroupRef[];
 		onRetry: () => Promise<unknown>;
 		onEditUser: (user: User) => void;
 	} = $props();
@@ -136,17 +142,19 @@
 		if (isGlobalAdmin(user)) {
 			return [{ text: m.common_admin(), variant: 'red' }];
 		}
-		// Group by roleId so a user assigned the same role on multiple envs gets
-		// one badge with a tooltip listing the env count.
-		// A Set per role, since manual and OIDC can both grant the same environment.
+		// One badge per role, with a tooltip listing where it applies unless that is only globally.
+		// Keyed by scope, since manual and OIDC can both grant the same scope.
 		return Array.from(
 			Map.groupBy(assignments, (a) => a.roleId),
 			([roleId, roleAssignments]) => {
-				const envCount = new Set(roleAssignments.map((a) => a.environmentId ?? 'global')).size;
+				const scopes = new Map(
+					roleAssignments.map((a) => [roleScopeOptionId(a), roleScopeLabel(a, environments, groups)] as const)
+				);
+				const onlyGlobal = scopes.size === 1 && scopes.has(GLOBAL_ENVIRONMENT_OPTION_ID);
 				return {
 					text: roleName(roleId),
 					variant: roleVariant(roleId),
-					tooltip: envCount > 1 ? m.users_role_summary_env_count({ count: envCount }) : undefined
+					tooltip: onlyGlobal ? undefined : [...scopes.values()].join(', ')
 				};
 			}
 		);
@@ -156,13 +164,15 @@
 		{ accessorKey: 'username', title: m.common_username(), sortable: true, cell: UsernameCell },
 		{ accessorKey: 'displayName', title: m.common_display_name(), sortable: true, cell: DisplayNameCell },
 		{ accessorKey: 'email', title: m.common_email(), sortable: true, cell: EmailCell },
-		{ accessorKey: 'roleAssignments', title: m.common_role(), sortable: false, cell: RoleCell }
+		{ accessorKey: 'roleAssignments', title: m.common_role(), sortable: false, cell: RoleCell },
+		{ accessorKey: 'userGroups', title: m.user_groups(), sortable: false, cell: UserGroupsCell }
 	] satisfies ColumnSpec<User>[];
 
 	const mobileFields = [
 		{ id: 'displayName', label: m.common_display_name(), defaultVisible: true },
 		{ id: 'email', label: m.common_email(), defaultVisible: true },
-		{ id: 'roleAssignments', label: m.common_role(), defaultVisible: true }
+		{ id: 'roleAssignments', label: m.common_role(), defaultVisible: true },
+		{ id: 'userGroups', label: m.user_groups(), defaultVisible: true }
 	];
 
 	const bulkActions = $derived.by<BulkAction[]>(() => [
@@ -219,6 +229,18 @@
 	</div>
 {/snippet}
 
+{#snippet UserGroupsCell({ item }: { item: User })}
+	{#if item.userGroups?.length}
+		<div class="flex flex-wrap items-center gap-1">
+			{#each item.userGroups as group (group.id)}
+				<Badge variant="gray" size="sm">{group.name}</Badge>
+			{/each}
+		</div>
+	{:else}
+		-
+	{/if}
+{/snippet}
+
 {#snippet UserMobileCardSnippet({ item, mobileFieldVisibility }: { item: User; mobileFieldVisibility: MobileFieldVisibility })}
 	<UniversalMobileCard
 		{item}
@@ -248,6 +270,13 @@
 				icon: UserIcon,
 				iconVariant: 'gray' as const,
 				show: (mobileFieldVisibility['displayName'] ?? true) && !!item.displayName
+			},
+			{
+				label: m.user_groups(),
+				getValue: (item: User) => item.userGroups?.map((group) => group.name).join(', '),
+				icon: CommunityIcon,
+				iconVariant: 'gray' as const,
+				show: (mobileFieldVisibility['userGroups'] ?? true) && !!item.userGroups?.length
 			}
 		]}
 		rowActions={RowActions}

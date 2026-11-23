@@ -1,18 +1,14 @@
 <script lang="ts">
-	import { dev } from '$app/env';
-	import { afterNavigate } from '$app/navigation';
-	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { SvelteSet } from 'svelte/reactivity';
 
-	import UpdateAllDialog from '#lib/components/dialogs/update-all-dialog.svelte';
 	import NewEnvironmentSheet from '#lib/components/sheets/new-environment-sheet.svelte';
 	import { TabBar } from '#lib/components/tab-bar/index.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { useUrlTab } from '#lib/hooks/use-url-tab.svelte.js';
-	import { ApiKeyIcon, DownloadIcon, EnvironmentsIcon, UpdateIcon } from '#lib/icons/index.js';
+	import { AgentIcon, ApiKeyIcon, DownloadIcon, EnvironmentsIcon } from '#lib/icons/index.js';
 	import { ResourcePageLayout, type ActionButton } from '#lib/layouts/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import { environmentListQuery } from '#lib/query/environments.js';
@@ -25,10 +21,10 @@
 	import { hasPermission } from '#lib/utils/auth.js';
 	import { downloadFromUrl } from '#lib/utils/browser-download.js';
 	import { bulkConfirmAndRun } from '#lib/utils/bulk-actions.js';
-	import { hasShownPermission } from '#lib/utils/environments.js';
 	import { ResourceListPageState } from '#lib/utils/resource-list-page.svelte.js';
 
 	import EnrollmentTokensTab from './components/enrollment-tokens-tab.svelte';
+	import EnvironmentGroupsTab from './components/environment-groups-tab.svelte';
 	import EnvironmentTable from './components/environment-table.svelte';
 
 	let { data } = $props();
@@ -46,7 +42,6 @@
 		data: loadedEnvironments.data.map((environment) => liveEnvironments.get(environment.id) ?? environment)
 	});
 	let environmentSession = $state(0);
-	let showUpdateAllDialog = $state(false);
 	let isDeleting = $state(false);
 	const isRefreshing = $derived(environmentsQuery.isFetching && !environmentsQuery.isPending);
 
@@ -61,14 +56,20 @@
 
 	const canCreateEnvironment = $derived(hasPermission('environments:create', GLOBAL_SCOPE));
 	const canDeleteEnvironment = $derived(hasPermission('environments:delete', GLOBAL_SCOPE));
-	const canUpdateEnvironments = $derived(hasShownPermission('system:upgrade'));
+	const canListEnvironmentGroups = $derived(hasPermission('environments:list', GLOBAL_SCOPE));
 
 	const urlTab = useUrlTab({
 		tabs: () => [
 			{
 				value: 'environments',
 				label: m.environments_title(),
-				icon: EnvironmentsIcon
+				icon: AgentIcon
+			},
+			{
+				value: 'environment-groups',
+				label: m.environments(),
+				icon: EnvironmentsIcon,
+				visible: canListEnvironmentGroups
 			},
 			{
 				value: 'enrollment-tokens',
@@ -112,14 +113,6 @@
 		});
 	}
 
-	// Dev-only: `?updateAllDemo=1` opens the update-all dialog against a scripted fake
-	// set of environments, so its progress and result states can be reviewed under `just dev` without
-	// updating anything. `dev` is compiled out of production builds.
-	const updateAllDemo = $derived(dev && page.url.searchParams.get('updateAllDemo') === '1');
-	afterNavigate(() => {
-		if (updateAllDemo) showUpdateAllDialog = true;
-	});
-
 	function onEnvironmentCreated() {
 		pageState.isCreateDialogOpen = false;
 		toast.success(m.common_create_success({ resource: m.resource_environment() }));
@@ -160,15 +153,6 @@
 				icon: DownloadIcon
 			});
 		}
-		if (canUpdateEnvironments) {
-			buttons.push({
-				id: 'update-all',
-				action: 'update',
-				label: m.update_all(),
-				icon: UpdateIcon,
-				onclick: () => (showUpdateAllDialog = true)
-			});
-		}
 		buttons.push({
 			id: 'refresh',
 			action: 'refresh',
@@ -201,6 +185,12 @@
 				/>
 			</Tabs.Content>
 
+			{#if canListEnvironmentGroups}
+				<Tabs.Content value="environment-groups">
+					<EnvironmentGroupsTab />
+				</Tabs.Content>
+			{/if}
+
 			{#if canCreateEnvironment}
 				<Tabs.Content value="enrollment-tokens">
 					<EnrollmentTokensTab />
@@ -215,6 +205,5 @@
 				<NewEnvironmentSheet bind:open={pageState.isCreateDialogOpen} {onEnvironmentCreated} />
 			{/key}
 		{/if}
-		<UpdateAllDialog bind:open={showUpdateAllDialog} debugDemo={updateAllDemo} onFinished={refresh} />
 	{/snippet}
 </ResourcePageLayout>

@@ -6,7 +6,6 @@ import {
 	InfoIcon,
 	CloseIcon,
 	CheckIcon,
-	UpdateIcon,
 	PlayIcon,
 	StopIcon,
 	ShieldCheckIcon,
@@ -27,29 +26,6 @@ export const usageFilters: FilterOption[] = [
 		value: false,
 		label: m.common_unused(),
 		icon: AlertIcon
-	}
-];
-
-export const imageUpdateFilters: FilterOption[] = [
-	{
-		value: 'has_update',
-		label: m.images_has_updates(),
-		icon: UpdateIcon
-	},
-	{
-		value: 'up_to_date',
-		label: m.images_no_updates(),
-		icon: VerifiedCheckIcon
-	},
-	{
-		value: 'error',
-		label: m.common_error(),
-		icon: CloseIcon
-	},
-	{
-		value: 'unknown',
-		label: m.common_unknown(),
-		icon: InfoIcon
 	}
 ];
 

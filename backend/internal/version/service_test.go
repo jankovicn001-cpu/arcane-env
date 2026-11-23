@@ -3,21 +3,11 @@ package version
 import (
 	"context"
 	"encoding/json/v2"
-	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/google/go-containerregistry/pkg/name"
-	ggcrregistry "github.com/google/go-containerregistry/pkg/registry"
-	"github.com/google/go-containerregistry/pkg/v1/mutate"
-	"github.com/google/go-containerregistry/pkg/v1/random"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/libtnb/sqlite"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
@@ -30,137 +20,19 @@ import (
 	"kit.getarcane.app/docker/streams/bus"
 	"kit.getarcane.app/updater/labels"
 
-	"getarcane.dev/arcane/v3/internal/activity"
 	"getarcane.dev/arcane/v3/internal/config"
 	"getarcane.dev/arcane/v3/internal/database"
 	"getarcane.dev/arcane/v3/internal/docker"
-	"getarcane.dev/arcane/v3/internal/event"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
-	"getarcane.dev/arcane/v3/internal/project"
-	"getarcane.dev/arcane/v3/internal/registry"
 	"getarcane.dev/arcane/v3/internal/settings"
 )
 
-type (
-	roundTripFunc func(*http.Request) (*http.Response, error)
-)
-
-func TestVersionService_GetAppVersionInfoDoesNotUseStoredDigestUpdateForSemverBuild(t *testing.T) {
-	ctx := t.Context()
-	db := setupImageUpdateTestDB(t)
-
-	const (
-		containerID = "arcane-container-1234567890"
-		imageID     = "sha256:arcane-image"
-		imageRef    = "ghcr.io/getarcaneapp/arcane:latest"
-	)
-	currentDigest := digest.FromString("current-arcane").String()
-	latestDigest := digest.FromString("latest-arcane").String()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/containers/json"):
-			w.Header().Set("Content-Type", "application/json")
-			if !assert.NoError(t, json.MarshalWrite(w, []container.Summary{
-				{
-					ID:    containerID,
-					State: container.StateRunning,
-					Labels: map[string]string{
-						labels.LabelArcane: "true",
-					},
-				},
-			})) {
-				return
-			}
-		case strings.Contains(r.URL.Path, "/containers/") && strings.HasSuffix(r.URL.Path, "/json"):
-			w.Header().Set("Content-Type", "application/json")
-			if !assert.NoError(t, json.MarshalWrite(w, container.InspectResponse{
-				ID:    containerID,
-				Image: imageID,
-				Config: &container.Config{
-					Image: imageRef,
-					Labels: map[string]string{
-						labels.LabelArcane: "true",
-					},
-				},
-			})) {
-				return
-			}
-		case strings.Contains(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json"):
-			encodedRef := strings.TrimSuffix(r.URL.Path[strings.LastIndex(r.URL.Path, "/images/")+len("/images/"):], "/json")
-			_, err := url.PathUnescape(encodedRef)
-			if !assert.NoError(t, err) {
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			if !assert.NoError(t, json.MarshalWrite(w, image.InspectResponse{
-				ID:          imageID,
-				RepoTags:    []string{imageRef},
-				RepoDigests: []string{"ghcr.io/getarcaneapp/arcane@" + currentDigest},
-			})) {
-				return
-			}
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	require.NoError(t, db.WithContext(ctx).Create(&imageupdate.ImageUpdateRecord{
-		ID:             imageID,
-		Repository:     "ghcr.io/getarcaneapp/arcane",
-		Tag:            "latest",
-		HasUpdate:      true,
-		UpdateType:     imageupdate.UpdateTypeDigest,
-		CurrentVersion: "latest",
-		CurrentDigest:  &currentDigest,
-		LatestDigest:   &latestDigest,
-		CheckTime:      time.Now().UTC(),
-	}).Error)
-
-	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusServiceUnavailable,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader("unavailable")),
-			Request:    req,
-		}, nil
-	})}
-	settingsService := newVersionSettingsService(t, true)
-	dockerService := newVersionDockerService(t, settingsService, server)
-	imageUpdateService := imageupdate.NewImageUpdateService(imageupdate.ImageUpdateServiceParams{
-		DB:              db,
-		ActivityService: activity.NewActivityService(db, settingsService),
-		DockerService:   dockerService,
-	})
-	svc := NewVersionService(VersionServiceParams{
-		HTTPClient:         httpClient,
-		AppVersion:         "1.2.3",
-		Revision:           "revision",
-		DockerService:      dockerService,
-		ImageUpdateService: imageUpdateService,
-		SettingsService:    settingsService,
-	})
-
-	info := svc.GetAppVersionInfo(ctx)
-
-	require.NotNil(t, info)
-	assert.True(t, info.IsSemverVersion)
-	assert.False(t, info.UpdateAvailable)
-	assert.Equal(t, latestDigest, info.NewestDigest)
-	assert.Equal(t, currentDigest, info.CurrentDigest)
-}
-
 func TestVersionService_GetAppVersionInfoDisplaysSemverNextVersion(t *testing.T) {
-	settingsService := newVersionSettingsService(t, false)
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
 	svc := NewVersionService(VersionServiceParams{
-		AppVersion:      "2.4.0-next.2",
-		Revision:        "2c3e44a10ddda540d7e19fc2a876c931fc33a426",
-		DockerService:   newVersionDockerService(t, settingsService, server),
-		SettingsService: settingsService,
+		AppVersion:    "2.4.0-next.2",
+		Revision:      "2c3e44a10ddda540d7e19fc2a876c931fc33a426",
+		DockerService: newVersionDockerService(t, server),
 	})
 
 	info := svc.GetAppVersionInfo(t.Context())
@@ -168,17 +40,16 @@ func TestVersionService_GetAppVersionInfoDisplaysSemverNextVersion(t *testing.T)
 	require.NotNil(t, info)
 	assert.Equal(t, "v2.4.0-next.2", info.DisplayVersion)
 	assert.True(t, info.IsSemverVersion)
+	assert.False(t, info.IsStableVersion)
 }
 
 func TestVersionService_GetAppVersionInfoPreservesDevVersion(t *testing.T) {
-	settingsService := newVersionSettingsService(t, false)
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
 	svc := NewVersionService(VersionServiceParams{
-		AppVersion:      "dev",
-		Revision:        "unknown",
-		DockerService:   newVersionDockerService(t, settingsService, server),
-		SettingsService: settingsService,
+		AppVersion:    "dev",
+		Revision:      "unknown",
+		DockerService: newVersionDockerService(t, server),
 	})
 
 	info := svc.GetAppVersionInfo(t.Context())
@@ -189,119 +60,31 @@ func TestVersionService_GetAppVersionInfoPreservesDevVersion(t *testing.T) {
 	assert.False(t, info.IsSemverVersion)
 }
 
-func newVersionSettingsService(t *testing.T, updateCheckEnabled bool) *settings.SettingsService {
-	t.Helper()
-	gdb, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, gdb.AutoMigrate(&settings.SettingVariable{}))
-	svc, err := settings.NewSettingsService(settings.SettingsServiceParams{
-		Ctx:    t.Context(),
-		DB:     &database.DB{DB: gdb},
-		Config: &config.Config{},
-		Env:    settings.Env{},
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Stop(context.WithoutCancel(t.Context()))) })
-	require.NoError(t, svc.SetBoolSetting(t.Context(), "updateCheckEnabled", updateCheckEnabled))
-	return svc
-}
-
-func setupImageUpdateTestDB(t *testing.T) *database.DB {
-	t.Helper()
-	dsn := fmt.Sprintf("file:image-update-test-%d?mode=memory&cache=shared", time.Now().UnixNano())
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&imageupdate.ImageUpdateRecord{}, &event.Event{}, &project.Project{}, &registry.ContainerRegistry{}))
-	return &database.DB{DB: db}
-}
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
-
-func newTestDockerClient(t *testing.T, server *httptest.Server) *client.Client {
-	t.Helper()
-
-	httpClient := server.Client()
-	cli, err := client.New(
-		client.WithHost(server.URL),
-		client.WithAPIVersion("1.41"),
-		client.WithHTTPClient(httpClient),
+func TestVersionService_GetAppVersionInfoReportsRunningImage(t *testing.T) {
+	const (
+		containerID = "arcane-container-1234567890"
+		imageID     = "sha256:arcane-image"
+		repo        = "ghcr.io/getarcaneapp/arcane"
+		tag         = "v2.4.0"
 	)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		_ = cli.Close()
-	})
-
-	return cli
-}
-
-func newVersionDockerService(t *testing.T, settingsService *settings.SettingsService, server *httptest.Server) *docker.DockerClientService {
-	t.Helper()
-	return docker.NewDockerClientService(t.Context(), nil, settingsService, bus.Config{}).WithClient(newTestDockerClient(t, server))
-}
-
-func TestVersionService_IsChannelBuild(t *testing.T) {
-	tests := []struct {
-		name       string
-		version    string
-		currentTag string
-		want       bool
-	}{
-		{"next prerelease version", "2.8.0-next.65", "latest", true},
-		{"stable version on next tag", "2.7.0", "next", true},
-		{"stable version on latest tag", "2.7.0", "latest", false},
-		{"stable version on version tag", "2.7.0", "v2.7.0", false},
-		{"beta prerelease version", "3.0.0-beta.2", "v3.0.0-beta.2", true},
-		{"beta version on rolling beta tag", "3.0.0-beta.2", "v3-beta", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			svc := NewVersionService(VersionServiceParams{
-				AppVersion:      tt.version,
-				Revision:        "rev",
-				SettingsService: newVersionSettingsService(t, false),
-			})
-			assert.Equal(t, tt.want, svc.isChannelBuild(tt.currentTag))
-		})
-	}
-}
-
-func newLabelRegistryTestServer(t *testing.T) string {
-	t.Helper()
-	server := httptest.NewServer(ggcrregistry.New(ggcrregistry.Logger(log.New(io.Discard, "", 0))))
-	t.Cleanup(server.Close)
-	serverURL, err := url.Parse(server.URL)
-	require.NoError(t, err)
-	return "localhost:" + serverURL.Port()
-}
-
-func newNextChannelDockerServer(t *testing.T, containerID, imageID, repo, tag, currentDigest string) *httptest.Server {
-	t.Helper()
-	imageRef := repo + ":" + tag
+	currentDigest := digest.FromString("current-arcane").String()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/containers/json"):
-			w.Header().Set("Content-Type", "application/json")
 			assert.NoError(t, json.MarshalWrite(w, []container.Summary{
 				{ID: containerID, State: container.StateRunning, Labels: map[string]string{labels.LabelArcane: "true"}},
 			}))
 		case strings.Contains(r.URL.Path, "/containers/") && strings.HasSuffix(r.URL.Path, "/json"):
-			w.Header().Set("Content-Type", "application/json")
 			assert.NoError(t, json.MarshalWrite(w, container.InspectResponse{
-				ID:    containerID,
-				Image: imageID,
-				Config: &container.Config{
-					Image:  imageRef,
-					Labels: map[string]string{labels.LabelArcane: "true"},
-				},
+				ID:     containerID,
+				Image:  imageID,
+				Config: &container.Config{Image: repo + ":" + tag, Labels: map[string]string{labels.LabelArcane: "true"}},
 			}))
 		case strings.Contains(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json"):
-			w.Header().Set("Content-Type", "application/json")
 			assert.NoError(t, json.MarshalWrite(w, image.InspectResponse{
 				ID:          imageID,
-				RepoTags:    []string{imageRef},
+				RepoTags:    []string{repo + ":" + tag},
 				RepoDigests: []string{repo + "@" + currentDigest},
 			}))
 		default:
@@ -309,294 +92,37 @@ func newNextChannelDockerServer(t *testing.T, containerID, imageID, repo, tag, c
 		}
 	}))
 	t.Cleanup(server.Close)
-	return server
-}
-
-func TestVersionService_GetAppVersionInfoNextChannelUsesImageLabel(t *testing.T) {
-	ctx := t.Context()
-	db := setupImageUpdateTestDB(t)
-
-	const (
-		containerID = "arcane-container-1234567890"
-		imageID     = "sha256:arcane-image"
-	)
-	registryHost := newLabelRegistryTestServer(t)
-	repo := registryHost + "/getarcaneapp/arcane"
-
-	img, err := random.Image(64, 1)
-	require.NoError(t, err)
-	cfg, err := img.ConfigFile()
-	require.NoError(t, err)
-	cfg = cfg.DeepCopy()
-	cfg.Config.Labels = map[string]string{"org.opencontainers.image.version": "v2.8.0-next.66"}
-	img, err = mutate.ConfigFile(img, cfg)
-	require.NoError(t, err)
-	pushRef, err := name.ParseReference(repo + ":next")
-	require.NoError(t, err)
-	require.NoError(t, remote.Write(pushRef, img))
-	imgDigest, err := img.Digest()
-	require.NoError(t, err)
-
-	currentDigest := digest.FromString("current-arcane").String()
-	server := newNextChannelDockerServer(t, containerID, imageID, repo, "next", currentDigest)
-
-	require.NoError(t, db.WithContext(ctx).Create(&imageupdate.ImageUpdateRecord{
-		ID:             imageID,
-		Repository:     repo,
-		Tag:            "next",
-		HasUpdate:      true,
-		UpdateType:     imageupdate.UpdateTypeDigest,
-		CurrentVersion: "next",
-		CurrentDigest:  &currentDigest,
-		LatestDigest:   func() *string { s := imgDigest.String(); return &s }(),
-		CheckTime:      time.Now().UTC(),
-	}).Error)
-
-	githubHit := false
-	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		githubHit = true
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"tag_name":"v2.7.0"}`)),
-			Request:    req,
-		}, nil
-	})}
-	settingsService := newVersionSettingsService(t, true)
-	dockerService := newVersionDockerService(t, settingsService, server)
-	imageUpdateService := imageupdate.NewImageUpdateService(imageupdate.ImageUpdateServiceParams{
-		DB:              db,
-		ActivityService: activity.NewActivityService(db, settingsService),
-		DockerService:   dockerService,
-	})
-	registrySvc := registry.NewContainerRegistryService(registry.ContainerRegistryServiceParams{DB: db})
 	svc := NewVersionService(VersionServiceParams{
-		HTTPClient:               httpClient,
-		AppVersion:               "2.8.0-next.65",
-		Revision:                 "revision",
-		ContainerRegistryService: registrySvc,
-		DockerService:            dockerService,
-		ImageUpdateService:       imageUpdateService,
-		SettingsService:          settingsService,
-	})
-
-	info := svc.GetAppVersionInfo(ctx)
-
-	require.NotNil(t, info)
-	assert.Equal(t, "v2.8.0-next.66", info.NewestVersion)
-	assert.True(t, info.UpdateAvailable)
-	assert.Equal(t, imgDigest.String(), info.NewestDigest)
-	assert.Empty(t, info.ReleaseNotes)
-	assert.Empty(t, info.ReleaseURL)
-	assert.False(t, githubHit, "next channel must not consult the GitHub stable release feed")
-}
-
-func TestVersionService_GetAppVersionInfoNextChannelLabelFailureFallsBackToDigest(t *testing.T) {
-	ctx := t.Context()
-	db := setupImageUpdateTestDB(t)
-
-	const (
-		containerID = "arcane-container-1234567890"
-		imageID     = "sha256:arcane-image"
-	)
-	registryHost := newLabelRegistryTestServer(t)
-	repo := registryHost + "/getarcaneapp/arcane"
-
-	currentDigest := digest.FromString("current-arcane").String()
-	latestDigest := digest.FromString("latest-arcane").String()
-	server := newNextChannelDockerServer(t, containerID, imageID, repo, "next", currentDigest)
-
-	require.NoError(t, db.WithContext(ctx).Create(&imageupdate.ImageUpdateRecord{
-		ID:             imageID,
-		Repository:     repo,
-		Tag:            "next",
-		HasUpdate:      true,
-		UpdateType:     imageupdate.UpdateTypeDigest,
-		CurrentVersion: "next",
-		CurrentDigest:  &currentDigest,
-		LatestDigest:   &latestDigest,
-		CheckTime:      time.Now().UTC(),
-	}).Error)
-
-	settingsService := newVersionSettingsService(t, true)
-	dockerService := newVersionDockerService(t, settingsService, server)
-	imageUpdateService := imageupdate.NewImageUpdateService(imageupdate.ImageUpdateServiceParams{
-		DB:              db,
-		ActivityService: activity.NewActivityService(db, settingsService),
-		DockerService:   dockerService,
-	})
-	registrySvc := registry.NewContainerRegistryService(registry.ContainerRegistryServiceParams{DB: db})
-	svc := NewVersionService(VersionServiceParams{
-		AppVersion:               "2.8.0-next.65",
-		Revision:                 "revision",
-		ContainerRegistryService: registrySvc,
-		DockerService:            dockerService,
-		ImageUpdateService:       imageUpdateService,
-		SettingsService:          settingsService,
-	})
-
-	info := svc.GetAppVersionInfo(ctx)
-
-	require.NotNil(t, info)
-	assert.Empty(t, info.NewestVersion, "label failure must not fall back to a stable tag")
-	assert.True(t, info.UpdateAvailable, "digest change alone flags the update")
-	assert.Equal(t, latestDigest, info.NewestDigest)
-}
-
-func TestVersionService_GetAppVersionInfoSuppressesOlderStableForPrerelease(t *testing.T) {
-	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"tag_name":"v2.7.0","body":"notes","published_at":"2026-08-05T22:21:04Z"}`)),
-			Request:    req,
-		}, nil
-	})}
-	// An -rc. prerelease stays on the stable track; the downgrade guard must
-	// still drop the older stable tag rather than showing a backwards arrow.
-	settingsService := newVersionSettingsService(t, true)
-	server := httptest.NewServer(http.NotFoundHandler())
-	t.Cleanup(server.Close)
-	svc := NewVersionService(VersionServiceParams{
-		HTTPClient:      httpClient,
-		AppVersion:      "2.8.0-rc.1",
-		Revision:        "revision",
-		DockerService:   newVersionDockerService(t, settingsService, server),
-		SettingsService: settingsService,
+		AppVersion:    "2.4.0",
+		Revision:      "2c3e44a10ddda540d7e19fc2a876c931fc33a426",
+		DockerService: newVersionDockerService(t, server),
 	})
 
 	info := svc.GetAppVersionInfo(t.Context())
 
 	require.NotNil(t, info)
-	assert.False(t, info.UpdateAvailable)
-	assert.Empty(t, info.NewestVersion)
-	assert.Empty(t, info.ReleaseNotes)
-	assert.Empty(t, info.ReleaseURL)
-	assert.Empty(t, info.ReleasedAt)
+	assert.Equal(t, "v2.4.0", info.CurrentVersion)
+	assert.Equal(t, tag, info.CurrentTag)
+	assert.Equal(t, currentDigest, info.CurrentDigest)
+	assert.True(t, info.IsStableVersion)
 }
 
-func TestVersionService_GetAppVersionInfoChannelCommitNotes(t *testing.T) {
-	const (
-		runningRevision = "1111111111111111111111111111111111111111"
-		targetRevision  = "2222222222222222222222222222222222222222"
-	)
-	tests := []struct {
-		name          string
-		imageRevision string
-		wantURL       string
-		wantNotes     []string
-		status        int
-		wantGitHubHit bool
-	}{
-		{
-			name:          "newer revision gets grouped notes",
-			imageRevision: targetRevision,
-			status:        http.StatusOK,
-			wantNotes: []string{
-				"### New features\n\n- feat: redesigned activity center ([#42](https://github.com/getarcaneapp/arcane/pull/42) by @octo)",
-				"### Bug fixes\n\n- fix: correct e2e test ([3333333](https://github.com/getarcaneapp/arcane/commit/3333333333333333333333333333333333333333))",
-				"[And 1 more commits](https://github.com/getarcaneapp/arcane/compare/" + runningRevision + "..." + targetRevision + ")",
-			},
-			wantURL:       "https://github.com/getarcaneapp/arcane/compare/" + runningRevision + "..." + targetRevision,
-			wantGitHubHit: true,
-		},
-		{
-			name:          "same revision gets no notes",
-			imageRevision: runningRevision,
-			status:        http.StatusOK,
-		},
-		{
-			name:          "compare failure keeps the diff link only",
-			imageRevision: targetRevision,
-			status:        http.StatusForbidden,
-			wantURL:       "https://github.com/getarcaneapp/arcane/compare/" + runningRevision + "..." + targetRevision,
-			wantGitHubHit: true,
-		},
-	}
+func newVersionDockerService(t *testing.T, server *httptest.Server) *docker.DockerClientService {
+	t.Helper()
+	gdb, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, gdb.AutoMigrate(&settings.SettingVariable{}))
+	settingsService, err := settings.NewSettingsService(settings.SettingsServiceParams{
+		Ctx:    t.Context(),
+		DB:     &database.DB{DB: gdb},
+		Config: &config.Config{},
+		Env:    settings.Env{},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, settingsService.Stop(context.WithoutCancel(t.Context()))) })
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := t.Context()
-			db := setupImageUpdateTestDB(t)
-
-			const (
-				containerID = "arcane-container-1234567890"
-				imageID     = "sha256:arcane-image"
-			)
-			repo := newLabelRegistryTestServer(t) + "/getarcaneapp/arcane"
-
-			img, err := random.Image(64, 1)
-			require.NoError(t, err)
-			cfg, err := img.ConfigFile()
-			require.NoError(t, err)
-			cfg = cfg.DeepCopy()
-			cfg.Config.Labels = map[string]string{
-				registry.OCIImageVersionLabel:  "v3.0.0-beta.45",
-				registry.OCIImageRevisionLabel: tt.imageRevision,
-			}
-			img, err = mutate.ConfigFile(img, cfg)
-			require.NoError(t, err)
-			pushRef, err := name.ParseReference(repo + ":v3-beta")
-			require.NoError(t, err)
-			require.NoError(t, remote.Write(pushRef, img))
-			imgDigest, err := img.Digest()
-			require.NoError(t, err)
-
-			currentDigest := digest.FromString("current-arcane").String()
-			server := newNextChannelDockerServer(t, containerID, imageID, repo, "v3-beta", currentDigest)
-			require.NoError(t, db.WithContext(ctx).Create(&imageupdate.ImageUpdateRecord{
-				ID:             imageID,
-				Repository:     repo,
-				Tag:            "v3-beta",
-				HasUpdate:      true,
-				UpdateType:     imageupdate.UpdateTypeDigest,
-				CurrentVersion: "v3-beta",
-				CurrentDigest:  &currentDigest,
-				LatestDigest:   new(imgDigest.String()),
-				CheckTime:      time.Now().UTC(),
-			}).Error)
-
-			githubHit := false
-			httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				githubHit = true
-				assert.Equal(t, "/repos/getarcaneapp/arcane/compare/"+runningRevision+"..."+targetRevision, req.URL.Path)
-				return &http.Response{
-					StatusCode: tt.status,
-					Header:     make(http.Header),
-					Body: io.NopCloser(strings.NewReader(`{"total_commits":5,"commits":[
-						{"sha":"4444444444444444444444444444444444444444","commit":{"message":"feat: redesigned activity center (#42)\n\nbody"},"author":{"login":"octo"}},
-						{"sha":"5555555555555555555555555555555555555555","commit":{"message":"chore: bump deps"},"author":null},
-						{"sha":"6666666666666666666666666666666666666666","commit":{"message":"Merge branch main"},"author":null},
-						{"sha":"3333333333333333333333333333333333333333","commit":{"message":"fix: correct e2e test"},"author":null}
-					]}`)),
-					Request: req,
-				}, nil
-			})}
-			settingsService := newVersionSettingsService(t, true)
-			dockerService := newVersionDockerService(t, settingsService, server)
-			imageUpdateService := imageupdate.NewImageUpdateService(imageupdate.ImageUpdateServiceParams{
-				DB:              db,
-				ActivityService: activity.NewActivityService(db, settingsService),
-				DockerService:   dockerService,
-			})
-			registrySvc := registry.NewContainerRegistryService(registry.ContainerRegistryServiceParams{DB: db})
-			svc := NewVersionService(VersionServiceParams{
-				HTTPClient:               httpClient,
-				AppVersion:               "3.0.0-beta.44",
-				Revision:                 runningRevision,
-				ContainerRegistryService: registrySvc,
-				DockerService:            dockerService,
-				ImageUpdateService:       imageUpdateService,
-				SettingsService:          settingsService,
-			})
-
-			info := svc.GetAppVersionInfo(ctx)
-
-			require.NotNil(t, info)
-			assert.Equal(t, "v3.0.0-beta.45", info.NewestVersion)
-			assert.Equal(t, tt.wantURL, info.ReleaseURL)
-			assert.Equal(t, strings.Join(tt.wantNotes, "\n\n"), info.ReleaseNotes)
-			assert.Equal(t, tt.wantGitHubHit, githubHit)
-		})
-	}
+	cli, err := client.New(client.WithHost(server.URL), client.WithAPIVersion("1.41"), client.WithHTTPClient(server.Client()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cli.Close() })
+	return docker.NewDockerClientService(t.Context(), nil, settingsService, bus.Config{}).WithClient(cli)
 }

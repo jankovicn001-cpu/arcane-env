@@ -29,7 +29,7 @@
 	import { m } from '#lib/paraglide/messages.js';
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { networkService } from '#lib/services/network-service.js';
-	import { environmentStore } from '#lib/stores/environment.store.svelte.js';
+	import { environmentStore, type EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
 	import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 	import { activityToastOptions, extractActivityId } from '#lib/utils/activity-toast.js';
 	import { handleApiResultWithCallbacks } from '#lib/utils/api.js';
@@ -45,12 +45,17 @@
 
 	let {
 		networks,
+		environments,
+		persistKey = 'arcane-networks-table',
 		selectedIds = $bindable(),
 		requestOptions = $bindable(),
 		onRetry,
 		refreshError
 	}: {
 		networks: NetworkPage;
+		/** Environments the table covers; defaults to every shown environment. */
+		environments?: EnvironmentRef[];
+		persistKey?: string;
 		selectedIds: string[];
 		requestOptions: SearchPaginationSortRequest;
 		onRetry: () => Promise<unknown>;
@@ -58,6 +63,11 @@
 	} = $props();
 
 	const queryClient = useQueryClient();
+
+	const tableEnvironments = $derived(environments ?? environmentStore.shown);
+	const environmentsKey = $derived(tableEnvironments.map((env) => env.id).join(','));
+	// A table pinned to one environment needs no environment column or facet.
+	const showEnvironmentColumn = $derived(environments === undefined || environments.length > 1);
 
 	const isLoading = $state({
 		remove: false
@@ -86,7 +96,7 @@
 								m.common_delete_success({ resource: `${m.resource_network()} "${safeName}"` }),
 								activityToastOptions(extractActivityId(data))
 							);
-							await queryClient.invalidateQueries({ queryKey: queryKeys.networks.listPrefix(environmentStore.shownKey) });
+							await queryClient.invalidateQueries({ queryKey: queryKeys.networks.listPrefix(environmentsKey) });
 						}
 					});
 				}
@@ -119,15 +129,14 @@
 			},
 			setLoading: (loading) => (isLoading.remove = loading),
 			onComplete: async (result) => {
-				if (result.success > 0)
-					await queryClient.invalidateQueries({ queryKey: queryKeys.networks.listPrefix(environmentStore.shownKey) });
+				if (result.success > 0) await queryClient.invalidateQueries({ queryKey: queryKeys.networks.listPrefix(environmentsKey) });
 			},
 			clearSelection: () => (selectedIds = [])
 		});
 	}
 
 	const isAnyLoading = $derived(Object.values(isLoading).some((l) => l));
-	const canDeleteNetwork = $derived(hasShownPermission('networks:delete'));
+	const canDeleteNetwork = $derived(hasShownPermission('networks:delete', tableEnvironments));
 
 	function getNetworkStatusBadge(
 		item: NetworkRow,
@@ -142,7 +151,7 @@
 	}
 
 	const columns = $derived([
-		...environmentColumns<NetworkRow>(),
+		...(showEnvironmentColumn ? environmentColumns<NetworkRow>() : []),
 		{ accessorKey: 'id', title: m.common_id(), cell: IdCell, hidden: true },
 		{ accessorKey: 'name', title: m.common_name(), sortable: true, cell: NameCell },
 		{ accessorKey: 'inUse', title: m.common_status(), sortable: true, cell: StatusCell },
@@ -319,7 +328,7 @@
 {/snippet}
 
 <ArcaneTable
-	persistKey="arcane-networks-table"
+	{persistKey}
 	items={networks}
 	bind:requestOptions
 	bind:selectedIds

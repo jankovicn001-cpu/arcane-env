@@ -17,7 +17,7 @@
 		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
 			"version": "latest",
 			"enableNonRootDocker": "true",
-			"moby": "true"
+			"moby": "false"
 		},
 		"ghcr.io/devcontainers/features/common-utils:2": {
 			"installZsh": "true",
@@ -37,15 +37,17 @@
 				"GitHub.copilot-chat",
 				"GitHub.copilot",
 				"ms-vscode.vscode-typescript-next",
-				"actboy168.tasks"
+				"actboy168.tasks",
+				"anthropic.claude-code"
 			]
 		}
 	},
 	"mounts": [
 		"source=node_modules,target=/workspace/node_modules,type=volume",
-		"source=pnpm_store,target=/workspace/.pnpm-store,type=volume"
+		"source=pnpm_store,target=/workspace/.pnpm-store,type=volume",
+		"source=claude-code-config,target=/root/.claude,type=volume"
 	],
-	"postCreateCommand": "just deps install all",
+	"postCreateCommand": "npm install -g vite-plus@1.7.0 && just deps install all",
 	"remoteUser": "root",
 	"containerEnv": {
 		"TZ": "Pacific/Auckland"

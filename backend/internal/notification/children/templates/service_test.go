@@ -2,90 +2,22 @@ package templates
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
-	"getarcane.dev/arcane/v3/pkg/notifications"
 	"getarcane.dev/types/v3"
 )
 
-func TestService_RenderEmailTemplate_IncludesEnvironment(t *testing.T) {
+func TestService_TestIncludesEnvironment(t *testing.T) {
 	svc := NewService(func() string { return "http://localhost:3000" })
+	content := svc.Test("Homelab Prod")
 
-	_, htmlBody, err := svc.ImageUpdate("Homelab Prod", "nginx:latest", &types.ImageUpdateResponse{
-		HasUpdate:     true,
-		UpdateType:    "digest",
-		CurrentDigest: "sha256:current",
-		LatestDigest:  "sha256:latest",
-		CheckTime:     time.Date(2026, time.January, 9, 15, 4, 5, 0, time.UTC),
-	}).RenderEmail()
+	_, htmlBody, err := content.RenderEmail()
 	require.NoError(t, err)
 	require.Contains(t, htmlBody, "Homelab Prod")
-
-	subject := notifications.BuildEmailSubject("Homelab Prod", "Container Update Available: nginx:latest")
-	require.Equal(t, "[Homelab Prod] Container Update Available: nginx:latest", subject)
-}
-
-func TestService_RenderContainerUpdateEmailTemplate_IncludesEnvironment(t *testing.T) {
-	svc := NewService(func() string { return "http://localhost:3000" })
-
-	_, htmlBody, err := svc.ContainerUpdate("Lab Remote", "nginx", "nginx:latest", "sha256:old", "sha256:new").RenderEmail()
-	require.NoError(t, err)
-	require.Contains(t, htmlBody, "Lab Remote")
-
-	subject := notifications.BuildEmailSubject("Lab Remote", "Container Updated: nginx")
-	require.Equal(t, "[Lab Remote] Container Updated: nginx", subject)
-}
-
-func TestService_RenderBatchEmailTemplate_IncludesEnvironment(t *testing.T) {
-	svc := NewService(func() string { return "http://localhost:3000" })
-
-	updates := map[string]*types.ImageUpdateResponse{
-		"nginx:latest": {
-			HasUpdate:     true,
-			UpdateType:    "digest",
-			CurrentDigest: "sha256:current",
-			LatestDigest:  "sha256:latest",
-			CheckTime:     time.Date(2026, time.January, 9, 15, 4, 5, 0, time.UTC),
-		},
-		"redis:latest": {
-			HasUpdate:     true,
-			UpdateType:    "minor",
-			CurrentDigest: "sha256:redis-current",
-			LatestDigest:  "sha256:redis-latest",
-			CheckTime:     time.Date(2026, time.January, 9, 15, 4, 5, 0, time.UTC),
-		},
+	for format, text := range content.Text {
+		require.Contains(t, text, "Homelab Prod", format)
 	}
-
-	_, htmlBody, err := svc.BatchImageUpdate("Agent Cluster A", updates, false).RenderEmail()
-	require.NoError(t, err)
-	require.Contains(t, htmlBody, "Agent Cluster A")
-
-	subject := notifications.BuildEmailSubject("Agent Cluster A", "2 Container Image Updates Available")
-	require.Equal(t, "[Agent Cluster A] 2 Container Image Updates Available", subject)
-}
-
-func TestService_RenderBatchEmailTemplate_ReleaseLinks(t *testing.T) {
-	svc := NewService(func() string { return "http://localhost:3000" })
-
-	updates := map[string]*types.ImageUpdateResponse{
-		"nginx:latest": {
-			HasUpdate:  true,
-			UpdateType: "digest",
-			ReleaseURL: "https://github.com/nginx/nginx/releases",
-		},
-	}
-
-	_, withLinks, err := svc.BatchImageUpdate("Lab", updates, true).RenderEmail()
-	require.NoError(t, err)
-	require.Contains(t, withLinks, "nginx:latest release notes")
-	require.Contains(t, withLinks, "https://github.com/nginx/nginx/releases")
-
-	_, withoutLinks, err := svc.BatchImageUpdate("Lab", updates, false).RenderEmail()
-	require.NoError(t, err)
-	require.NotContains(t, withoutLinks, "release notes")
-	require.NotContains(t, withoutLinks, "https://github.com/nginx/nginx/releases")
 }
 
 func TestService_RenderVulnerabilitySummaryEmailTemplate_IncludesEnvironment(t *testing.T) {

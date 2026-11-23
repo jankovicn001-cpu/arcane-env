@@ -3,15 +3,7 @@
 
 	import * as StatStrip from '#lib/components/stat-strip/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
-	import {
-		AlertIcon,
-		ArrowDownIcon,
-		ArrowUpIcon,
-		EnvironmentsIcon,
-		ShieldAlertIcon,
-		TrashIcon,
-		UpdateIcon
-	} from '#lib/icons/index.js';
+	import { AlertIcon, ArrowDownIcon, ArrowUpIcon, EnvironmentsIcon, ShieldAlertIcon, TrashIcon } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import type { BuiltinDashboardWidgetType } from '#lib/types/ui/user.js';
 	import { bytes } from '#lib/utils/formatting.js';
@@ -20,22 +12,15 @@
 		id,
 		healthy,
 		attention,
-		updates,
 		risk,
 		reclaimable
 	}: {
-		id: Extract<BuiltinDashboardWidgetType, 'healthy' | 'attentionCount' | 'updates' | 'risk' | 'reclaimableTotal'>;
+		id: Extract<BuiltinDashboardWidgetType, 'healthy' | 'attentionCount' | 'risk' | 'reclaimableTotal'>;
 		healthy: { online: number; total: number; offlineNames: string[] };
 		attention: { count: number; critical: number; loading: boolean };
-		updates: { pending: number; upToDate: number; checking: boolean };
 		risk: { score: number | null; delta?: number; knownExploited: number; loading: boolean };
 		reclaimable: { bytes: number | null; environments: number; loading: boolean };
 	} = $props();
-
-	const updatesContext = $derived.by(() => {
-		if (updates.checking) return m.dashboard_updates_checking();
-		return updates.pending === 0 ? m.dashboard_updates_up_to_date() : m.dashboard_updates_available_label();
-	});
 </script>
 
 <Card.Root class="h-full min-w-0">
@@ -66,20 +51,6 @@
 				]}
 			>
 				{m.count_critical({ count: attention.critical })}
-			</StatStrip.Item>
-		{:else if id === 'updates'}
-			<StatStrip.Item
-				label={m.updates()}
-				value={updates.pending}
-				icon={UpdateIcon}
-				href={resolve('/(app)/updates')}
-				loading={updates.checking && updates.pending === 0}
-				segments={[
-					{ value: updates.pending, tone: 'update' },
-					{ value: updates.upToDate, tone: 'muted' }
-				]}
-			>
-				{updatesContext}
 			</StatStrip.Item>
 		{:else if id === 'risk'}
 			<StatStrip.Item

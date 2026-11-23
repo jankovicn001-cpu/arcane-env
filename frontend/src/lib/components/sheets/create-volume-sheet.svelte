@@ -7,6 +7,7 @@
 	import * as Accordion from '#lib/components/ui/accordion/index.js';
 	import * as ResponsiveDialog from '#lib/components/ui/responsive-dialog/index.js';
 	import { m } from '#lib/paraglide/messages.js';
+	import type { EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
 	import type { VolumeCreate } from '#lib/types/ui/volume.js';
 	import { destinationEnvironmentId } from '#lib/utils/environments.js';
 	import { parseKeyValuePairs } from '#lib/utils/form-parsers.js';
@@ -16,14 +17,16 @@
 
 	type CreateVolumeFormProps = {
 		open: boolean;
+		/** Destinations offered; defaults to every shown environment. */
+		environments?: EnvironmentRef[];
 		onSubmit: (data: VolumeCreate, environmentId: string) => void;
 		isLoading: boolean;
 	};
 
-	let { open = $bindable(false), onSubmit, isLoading }: CreateVolumeFormProps = $props();
+	let { open = $bindable(false), environments, onSubmit, isLoading }: CreateVolumeFormProps = $props();
 
 	let pickedEnvironmentId = $state('');
-	const environmentId = $derived(destinationEnvironmentId(pickedEnvironmentId, 'volumes:create'));
+	const environmentId = $derived(destinationEnvironmentId(pickedEnvironmentId, 'volumes:create', environments));
 
 	const drivers = [
 		{ value: 'local', label: m.local() },
@@ -85,6 +88,7 @@
 		<EnvironmentDestinationSelect
 			bind:value={() => environmentId, (value) => (pickedEnvironmentId = value)}
 			permission="volumes:create"
+			{environments}
 			variant="field"
 		/>
 		<FormInput

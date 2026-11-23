@@ -103,7 +103,6 @@ const (
 	PermContainersPause           = "containers:pause"
 	PermContainersDelete          = "containers:delete"
 	PermContainersExec            = "containers:exec"
-	PermContainersAutoUpdate      = "containers:autoupdate"
 	PermProjectsList              = "projects:list"
 	PermProjectsRead              = "projects:read"
 	PermProjectsLogs              = "projects:logs"
@@ -175,7 +174,6 @@ const (
 	PermSwarmSecretsUpdate        = "swarm-secrets:update"
 	PermSwarmSecretsDelete        = "swarm-secrets:delete"
 	PermPodmanRead                = "podman:read"
-	PermPodmanAutoUpdate          = "podman:autoupdate"
 	PermPodmanPodsList            = "podman-pods:list"
 	PermPodmanPodsRead            = "podman-pods:read"
 	PermPodmanPodsCreate          = "podman-pods:create"
@@ -219,17 +217,11 @@ const (
 	PermJobsRead                  = "jobs:read"
 	PermJobsUpdate                = "jobs:update"
 	PermJobsRun                   = "jobs:run"
-	PermJobsRestart               = "jobs:restart"
 	PermJobsRetry                 = "jobs:retry"
 	PermJobsCancel                = "jobs:cancel"
 	PermJobsAck                   = "jobs:ack"
 	PermSystemRead                = "system:read"
 	PermSystemPrune               = "system:prune"
-	PermSystemUpgrade             = "system:upgrade"
-	PermImageUpdatesList          = "image-updates:list"
-	PermImageUpdatesRead          = "image-updates:read"
-	PermImageUpdatesCheck         = "image-updates:check"
-	PermImageUpdatesApply         = "image-updates:apply"
 	PermVulnsList                 = "vulnerabilities:list"
 	PermVulnsRead                 = "vulnerabilities:read"
 	PermVulnsScan                 = "vulnerabilities:scan"
@@ -374,7 +366,6 @@ func BuiltInEditorPermissions() []string {
 		PermContainersPause,
 		PermContainersDelete,
 		PermContainersExec,
-		PermContainersAutoUpdate,
 
 		PermProjectsList, PermProjectsRead, PermProjectsLogs, PermProjectsCreate, PermProjectsUpdate, PermProjectsDeploy, PermProjectsJobsRun,
 		PermProjectsDown, PermProjectsRestart, PermProjectsDelete, PermProjectsArchive,
@@ -387,7 +378,7 @@ func BuiltInEditorPermissions() []string {
 		PermSwarmNodesList, PermSwarmNodesRead, PermSwarmNodesUpdate, PermSwarmNodesDelete, PermSwarmNodesPromote, PermSwarmNodesDemote,
 		PermSwarmConfigsList, PermSwarmConfigsRead, PermSwarmConfigsCreate, PermSwarmConfigsUpdate, PermSwarmConfigsDelete,
 		PermSwarmSecretsList, PermSwarmSecretsRead, PermSwarmSecretsCreate, PermSwarmSecretsUpdate, PermSwarmSecretsDelete,
-		PermPodmanRead, PermPodmanAutoUpdate,
+		PermPodmanRead,
 		PermPodmanPodsList, PermPodmanPodsRead, PermPodmanPodsCreate, PermPodmanPodsDelete, PermPodmanPodsPrune,
 		PermPodmanPodsStart, PermPodmanPodsStop, PermPodmanPodsRestart, PermPodmanPodsPause, PermPodmanPodsKill,
 		PermPodmanQuadletsList, PermPodmanQuadletsRead, PermPodmanQuadletsCreate, PermPodmanQuadletsUpdate, PermPodmanQuadletsDelete,
@@ -396,10 +387,9 @@ func BuiltInEditorPermissions() []string {
 		PermPodmanKubeRead, PermPodmanKubeCreate, PermPodmanKubeDelete,
 		PermGitOpsList, PermGitOpsRead, PermGitOpsCreate, PermGitOpsUpdate, PermGitOpsDelete, PermGitOpsSync, PermGitOpsBackup, PermGitOpsBidirectional,
 		PermWebhooksList, PermWebhooksCreate, PermWebhooksUpdate, PermWebhooksDelete,
-		PermJobsList, PermJobsRead, PermJobsUpdate, PermJobsRun, PermJobsRestart, PermJobsRetry, PermJobsCancel, PermJobsAck,
+		PermJobsList, PermJobsRead, PermJobsUpdate, PermJobsRun, PermJobsRetry, PermJobsCancel, PermJobsAck,
 		PermNotificationsList, PermNotificationsRead, PermNotificationsUpdate, PermNotificationsDelete, PermNotificationsTest,
 		PermSystemRead, PermSystemPrune,
-		PermImageUpdatesList, PermImageUpdatesRead, PermImageUpdatesCheck, PermImageUpdatesApply,
 		PermVulnsList, PermVulnsRead, PermVulnsScan, PermVulnsUpdate,
 		PermBuildWorkspacesList, PermBuildWorkspacesRead, PermBuildWorkspacesCreate, PermBuildWorkspacesDelete,
 		PermActivitiesList, PermActivitiesRead, PermActivitiesCancel, PermActivitiesDelete,
@@ -423,7 +413,6 @@ func BuiltInDeployerPermissions() []string {
 		PermContainersRedeploy,
 		PermContainersKill,
 		PermContainersPause,
-		PermContainersAutoUpdate,
 
 		PermProjectsList, PermProjectsRead, PermProjectsLogs, PermProjectsDeploy, PermProjectsJobsRun, PermProjectsDown, PermProjectsRestart,
 		PermImagesList, PermImagesRead, PermImagesPull, PermImagesTag, PermImagesCommit,
@@ -435,13 +424,12 @@ func BuiltInDeployerPermissions() []string {
 		PermSwarmNodesList, PermSwarmNodesRead,
 		PermSwarmConfigsList, PermSwarmConfigsRead,
 		PermSwarmSecretsList, PermSwarmSecretsRead,
-		PermPodmanRead, PermPodmanAutoUpdate,
+		PermPodmanRead,
 		PermPodmanPodsList, PermPodmanPodsRead,
 		PermPodmanQuadletsList, PermPodmanQuadletsRead, PermPodmanQuadletsStart, PermPodmanQuadletsStop, PermPodmanQuadletsRestart,
 		PermPodmanSecretsList, PermPodmanSecretsRead,
 		PermGitOpsList, PermGitOpsRead, PermGitOpsSync,
 		PermSystemRead,
-		PermImageUpdatesList, PermImageUpdatesRead, PermImageUpdatesCheck, PermImageUpdatesApply,
 		PermVulnsList, PermVulnsRead,
 		PermActivitiesList, PermActivitiesRead, PermActivitiesCancel,
 	}
@@ -479,7 +467,6 @@ func BuiltInViewerPermissions() []string {
 		PermGitOpsList, PermGitOpsRead,
 		PermWebhooksList,
 		PermSystemRead,
-		PermImageUpdatesList, PermImageUpdatesRead,
 		PermVulnsList, PermVulnsRead,
 		PermActivitiesList, PermActivitiesRead,
 		PermEnvironmentSettingsRead,
@@ -506,7 +493,6 @@ func BuiltInMonitorPermissions() []string {
 		PermPodmanQuadletsList, PermPodmanQuadletsRead,
 		PermPodmanSecretsList, PermPodmanSecretsRead,
 		PermSystemRead,
-		PermImageUpdatesList, PermImageUpdatesRead,
 		PermVulnsList, PermVulnsRead,
 		PermActivitiesList, PermActivitiesRead,
 	}

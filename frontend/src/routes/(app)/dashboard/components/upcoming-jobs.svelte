@@ -12,8 +12,6 @@
 
 	const JOB_LIMIT = 5;
 	const USER_JOB_GROUPS: ReadonlySet<string> = new Set([
-		'auto-update',
-		'image-polling',
 		'vulnerability-scan',
 		'scheduled-prune',
 		'volume-backup',

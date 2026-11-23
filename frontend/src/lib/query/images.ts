@@ -79,13 +79,6 @@ export function imageBuildRecordQuery(environmentId: string, buildId: string | n
 	});
 }
 
-export function imageReleaseNotesQuery(environmentId: string, imageRef: string, version?: string, digest?: string) {
-	return queryOptions({
-		queryKey: queryKeys.images.releaseNotes(environmentId, imageRef, version ?? '', digest ?? ''),
-		queryFn: () => imageService.getImageReleaseNotes(environmentId, imageRef, { version, digest })
-	});
-}
-
 export function buildWorkspaceQuery(environmentId: string) {
 	return queryOptions({
 		queryKey: queryKeys.buildWorkspace.workspace(environmentId),

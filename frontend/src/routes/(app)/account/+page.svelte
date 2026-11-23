@@ -14,8 +14,10 @@
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { userService } from '#lib/services/user-service.js';
 	import settingsStore from '#lib/stores/config-store.svelte.js';
+	import { environmentStore } from '#lib/stores/environment.store.svelte.js';
 	import userStore from '#lib/stores/user-store.svelte.js';
 	import { GLOBAL_SCOPE } from '#lib/types/role.js';
+	import type { RoleAssignmentSummary } from '#lib/types/user.js';
 	import { avatarUploadLimitBytes, prepareAvatarUploadFile } from '#lib/utils/avatar-upload.js';
 	import { getDefaultProfilePicture } from '#lib/utils/docker.js';
 	import { formatDate, formatRelativeTime } from '#lib/utils/formatting.js';
@@ -50,6 +52,16 @@
 
 	function prettyRoleName(roleId: string): string {
 		return BUILT_IN_ROLE_LABELS[roleId]?.() ?? roleId.replace('role_', '').replaceAll('_', ' ');
+	}
+
+	// Environment names come from the agents' group refs; one without a visible agent shows its id.
+	function assignmentScopeLabel(assignment: RoleAssignmentSummary): string {
+		if (assignment.environmentGroupId) {
+			const group = environmentStore.available.find((env) => env.group?.id === assignment.environmentGroupId)?.group;
+			return m.environment_name({ name: group?.name ?? assignment.environmentGroupId });
+		}
+		if (assignment.environmentId) return m.account_role_environment({ env: assignment.environmentId });
+		return m.account_global_scope();
 	}
 
 	const queryClient = useQueryClient();
@@ -334,11 +346,11 @@
 							</h3>
 							{#if currentUser.roleAssignments && currentUser.roleAssignments.length > 0}
 								<ul class="flex flex-wrap gap-2">
-									{#each currentUser.roleAssignments as ra (`${ra.source}-${ra.roleId}-${ra.environmentId ?? 'global'}`)}
+									{#each currentUser.roleAssignments as ra (`${ra.source}-${ra.roleId}-${ra.environmentGroupId ?? ra.environmentId ?? 'global'}`)}
 										<li class="rounded-lg border border-border/60 bg-muted/20 px-3 py-1.5">
 											<span class="text-sm font-medium">{prettyRoleName(ra.roleId)}</span>
 											<span class="ml-2 text-xs text-muted-foreground">
-												{ra.environmentId ? m.account_role_environment({ env: ra.environmentId }) : m.account_global_scope()}
+												{assignmentScopeLabel(ra)}
 												{#if ra.source === 'oidc'}
 													<span class="ml-1 opacity-70">{m.account_via_sso()}</span>
 												{:else if ra.source === 'ldap'}

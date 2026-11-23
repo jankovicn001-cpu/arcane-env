@@ -15,10 +15,11 @@ type (
 	UserRoleAssignment struct {
 		database.BaseModel
 
-		UserID        string  `json:"userId" gorm:"column:user_id;not null;index"`
-		RoleID        string  `json:"roleId" gorm:"column:role_id;not null;index"`
-		EnvironmentID *string `json:"environmentId,omitempty" gorm:"column:environment_id;index"`
-		Source        string  `json:"source" gorm:"column:source;not null;default:'manual'"`
+		UserID             string  `json:"userId" gorm:"column:user_id;not null;index"`
+		RoleID             string  `json:"roleId" gorm:"column:role_id;not null;index"`
+		EnvironmentID      *string `json:"environmentId,omitempty" gorm:"column:environment_id;index"`
+		EnvironmentGroupID *string `json:"environmentGroupId,omitempty" gorm:"column:environment_group_id;index"`
+		Source             string  `json:"source" gorm:"column:source;not null;default:'manual'"`
 	}
 
 	ApiKeyPermission struct {
@@ -33,10 +34,11 @@ type (
 	OidcRoleMapping struct {
 		database.BaseModel
 
-		ClaimValue    string  `json:"claimValue" gorm:"column:claim_value;not null;index"`
-		RoleID        string  `json:"roleId" gorm:"column:role_id;not null;index"`
-		EnvironmentID *string `json:"environmentId,omitempty" gorm:"column:environment_id"`
-		Source        string  `json:"source" gorm:"column:source;not null;default:'manual'"`
+		ClaimValue         string  `json:"claimValue" gorm:"column:claim_value;not null;index"`
+		RoleID             string  `json:"roleId" gorm:"column:role_id;not null;index"`
+		EnvironmentID      *string `json:"environmentId,omitempty" gorm:"column:environment_id"`
+		EnvironmentGroupID *string `json:"environmentGroupId,omitempty" gorm:"column:environment_group_id;index"`
+		Source             string  `json:"source" gorm:"column:source;not null;default:'manual'"`
 	}
 )
 

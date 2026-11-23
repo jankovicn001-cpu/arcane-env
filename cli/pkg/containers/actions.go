@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"kit.getarcane.app"
 	"kit.getarcane.app/acfs"
 
 	"getarcane.dev/cli/v3/internal/cmdutil"
@@ -232,44 +231,5 @@ func newEditCmd() *cobra.Command {
 		},
 	}
 	command.Flags().StringVarP(&opts.file, "file", "f", "", "JSON edit payload to apply (omit to print the current editable configuration)")
-	return command
-}
-
-func newAutoUpdateCmd() *cobra.Command {
-	var opts struct {
-		enabled bool
-	}
-	command := &cobra.Command{
-		Use:          "auto-update <container-id|name>",
-		Short:        "Enable or disable auto-update for a container",
-		Args:         cobra.ExactArgs(1),
-		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := cmdutil.ClientFromCommand(cmd)
-			if err != nil {
-				return err
-			}
-
-			resolved, _, err := ContainerRef.Resolve(cmd.Context(), c, args[0], false)
-			if err != nil {
-				return err
-			}
-
-			body := types.ContainerSetAutoUpdateRequest{Enabled: opts.enabled}
-
-			return cmdutil.Run(cmd, c, cmdutil.Spec[types.MessageResponse]{
-				Method:         http.MethodPut,
-				Path:           clitypes.ContainerAutoUpdate(c.EnvID(), resolved.ID),
-				Body:           body,
-				FailureMessage: "failed to set container auto-update",
-				Render: func(data types.MessageResponse) error {
-					output.Success("Auto-update %s for container %s", kit.Ternary(opts.enabled, "enabled", "disabled"), containerDisplayName(resolved))
-					return nil
-				},
-			})
-		},
-	}
-	command.Flags().BoolVar(&opts.enabled, "enabled", false, "Whether auto-update is enabled for this container")
-	_ = command.MarkFlagRequired("enabled")
 	return command
 }

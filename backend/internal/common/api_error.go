@@ -99,15 +99,16 @@ func ToAPIError(err error) *APIError {
 		return NewAPIErrorWithDetails(dockerAPIErr.Message, APIErrorCodeDockerAPIError, dockerAPIErr.HTTPStatus(), dockerAPIErr.Details)
 	}
 
+	var fieldDetails any
+	if fieldErr, ok := errors.AsType[*types.FieldError](err); ok {
+		fieldDetails = map[string]any{"field": fieldErr.Field}
+	}
+
 	switch {
 	case errors.Is(err, ErrValidation):
-		var details map[string]any
-		if fieldErr, ok := errors.AsType[*types.FieldError](err); ok {
-			details = map[string]any{"field": fieldErr.Field}
-		}
-		return NewAPIErrorWithDetails(err.Error(), APIErrorCodeValidationError, http.StatusBadRequest, details)
+		return NewAPIErrorWithDetails(err.Error(), APIErrorCodeValidationError, http.StatusBadRequest, fieldDetails)
 	case errors.Is(err, ErrBadRequest):
-		return NewAPIError(err.Error(), APIErrorCodeBadRequest, http.StatusBadRequest)
+		return NewAPIErrorWithDetails(err.Error(), APIErrorCodeBadRequest, http.StatusBadRequest, fieldDetails)
 	case errors.Is(err, ErrUnauthorized):
 		return NewAPIError(err.Error(), APIErrorCodeUnauthorized, http.StatusUnauthorized)
 	case errors.Is(err, ErrFeatureDisabled):
@@ -117,7 +118,7 @@ func ToAPIError(err error) *APIError {
 	case errors.Is(err, ErrNotFound):
 		return NewAPIError(err.Error(), APIErrorCodeNotFound, http.StatusNotFound)
 	case errors.Is(err, ErrConflict):
-		return NewAPIError(err.Error(), APIErrorCodeConflict, http.StatusConflict)
+		return NewAPIErrorWithDetails(err.Error(), APIErrorCodeConflict, http.StatusConflict, fieldDetails)
 	case errors.Is(err, ErrTimeout):
 		return NewAPIError(err.Error(), APIErrorCodeTimeout, http.StatusGatewayTimeout)
 	case errors.Is(err, ErrUnavailable):

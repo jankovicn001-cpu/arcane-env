@@ -34,7 +34,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/gitops"
 	"getarcane.dev/arcane/v3/internal/gitrepo"
 	"getarcane.dev/arcane/v3/internal/image"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/job"
 	"getarcane.dev/arcane/v3/internal/kv"
 	"getarcane.dev/arcane/v3/internal/network"
@@ -53,7 +52,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/swarm"
 	"getarcane.dev/arcane/v3/internal/system"
 	"getarcane.dev/arcane/v3/internal/template"
-	"getarcane.dev/arcane/v3/internal/updater"
 	"getarcane.dev/arcane/v3/internal/user"
 	"getarcane.dev/arcane/v3/internal/variable"
 	"getarcane.dev/arcane/v3/internal/version"
@@ -85,7 +83,6 @@ type (
 		Network           *network.NetworkService
 		Port              *port.PortService
 		Swarm             *swarm.SwarmService
-		ImageUpdate       *imageupdate.ImageUpdateService
 		Session           *session.SessionService
 		Auth              *auth.AuthService
 		Oidc              *oidc.OidcService
@@ -94,7 +91,6 @@ type (
 		ContainerRegistry *registry.ContainerRegistryService
 		System            *system.Module
 		Diagnostics       *diagnostics.DiagnosticsService
-		Updater           *updater.Module
 		Event             *event.EventService
 		Activity          *activity.ActivityService
 		Version           *version.VersionService
@@ -111,8 +107,6 @@ type (
 		AuthMiddleware    *auth.AuthMiddleware
 		JWKSetManager     *arcaneoidc.KeySetManager
 
-		AutoUpdate             *flow.Job `name:"auto-update"`
-		ImageUpdateWatcher     *scheduler.ImageUpdateWatcher
 		DockerClientRefresh    *scheduler.DockerClientRefreshJob
 		Analytics              *scheduler.AnalyticsJob
 		EventCleanup           *scheduler.EventCleanupJob

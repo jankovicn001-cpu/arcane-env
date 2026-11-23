@@ -3,7 +3,6 @@
 	import ImagePatchSettings from '#lib/components/settings/image-patch-settings.svelte';
 	import LifecycleSecuritySettings from '#lib/components/settings/lifecycle-security-settings.svelte';
 	import TrivySecuritySettings from '#lib/components/settings/trivy-security-settings.svelte';
-	import VulnerabilityUpdateGateSettings from '#lib/components/settings/vulnerability-update-gate-settings.svelte';
 	import { TabBar, type TabItem } from '#lib/components/tab-bar/index.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import { CodeIcon, SearchIcon, ShieldCheckIcon } from '#lib/icons/index.js';
@@ -56,11 +55,6 @@
 		'vulnerabilityThreatIntelEnabled',
 		'trivyConfig',
 		'trivyIgnore',
-		'vulnerabilityUpdateGateEnabled',
-		'vulnerabilityUpdateGateMaxCritical',
-		'vulnerabilityUpdateGateMaxHigh',
-		'vulnerabilityUpdateGateMaxMedium',
-		'vulnerabilityUpdateGateMaxLow',
 		'imagePatchSuffix',
 		'imagePatchTimeoutSec',
 		'imagePatchAllPlatforms',
@@ -70,7 +64,7 @@
 		'lifecycleMaxTimeoutSec'
 	]}
 >
-	{#snippet content({ formInputs, mixed, environmentId, settings }, scope)}
+	{#snippet content({ formInputs, mixed, environmentId }, scope)}
 		{@const trivyEnvironmentId = scope.entries.find(({ environment }) =>
 			featureStore.isEnabled('vulnerabilityManagement', environment.id)
 		)?.environment.id}
@@ -86,12 +80,7 @@
 			</div>
 			{#if trivyEnvironmentId}
 				<Tabs.Content value="trivy">
-					<div class="space-y-8">
-						<TrivySecuritySettings {formInputs} {mixed} environmentId={trivyEnvironmentId} />
-						{#if settings.values.vulnerabilityUpdateGateEnabled !== undefined}
-							<VulnerabilityUpdateGateSettings {formInputs} {mixed} />
-						{/if}
-					</div>
+					<TrivySecuritySettings {formInputs} {mixed} environmentId={trivyEnvironmentId} />
 				</Tabs.Content>
 			{/if}
 			<Tabs.Content value="patching">

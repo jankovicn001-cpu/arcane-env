@@ -7,14 +7,13 @@
 	import { ArrowRightIcon, InfoIcon, type IconType } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 
-	type SegmentTone = 'success' | 'warning' | 'destructive' | 'info' | 'update' | 'muted';
+	type SegmentTone = 'success' | 'warning' | 'destructive' | 'info' | 'muted';
 
 	const segmentToneClass: Record<SegmentTone, string> = {
 		success: 'bg-success',
 		warning: 'bg-warning',
 		destructive: 'bg-destructive',
 		info: 'bg-info',
-		update: 'bg-update',
 		muted: 'bg-muted-foreground/40'
 	};
 

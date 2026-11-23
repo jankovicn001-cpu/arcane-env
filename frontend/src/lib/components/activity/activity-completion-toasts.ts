@@ -18,7 +18,6 @@ const SHOWN_SUPPRESSION_MS = 15_000;
 const LONG_RUNNING_TYPES = new Set<ActivityType>([
 	'image_pull',
 	'image_build',
-	'image_update_check',
 	'project_pull',
 	'project_build',
 	'project_deploy',
@@ -27,7 +26,6 @@ const LONG_RUNNING_TYPES = new Set<ActivityType>([
 	'container_redeploy',
 	'vulnerability_scan',
 	'image_patch',
-	'auto_update',
 	'system_prune'
 ]);
 

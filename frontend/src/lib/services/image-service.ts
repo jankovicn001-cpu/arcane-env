@@ -10,19 +10,16 @@ import type {
 	ImageUsageCounts,
 	ImageBuildRecord,
 	ImageAttestationList,
-	ImageReleaseNotes,
 	ImageHistoryItem,
 	ImageSearchResult,
 	ImageTagRequest
 } from '#lib/types/image.js';
 import type { PatchOptions, PatchRecord, PatchTarget } from '#lib/types/imagepatch.js';
-import type { ImageUpdateResponse } from '#lib/types/imageupdate.js';
 import type { OperationStreamFrame } from '#lib/types/stream.js';
 import type { PruneImagesOptions } from '#lib/types/system.js';
 import type { ImageAttestationRequestOptions, ImagePullResult } from '#lib/types/ui/image.js';
 import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 import type { UploadProgressCallback } from '#lib/types/ui/upload.js';
-import type { UpdaterOptions, UpdaterResult } from '#lib/types/updater.js';
 import { readNdjsonStream } from '#lib/utils/streaming.js';
 import { transformPaginationParams } from '#lib/utils/tables.js';
 import { tryCatch } from '#lib/utils/try-catch.js';
@@ -70,18 +67,6 @@ class ImageService extends BaseAPIService {
 				params
 			})
 		);
-	}
-
-	async getImageReleaseNotes(
-		environmentId: string,
-		imageRef: string,
-		options?: { version?: string; digest?: string }
-	): Promise<ImageReleaseNotes> {
-		const params: Record<string, string> = { imageRef };
-		if (options?.version) params['version'] = options.version;
-		if (options?.digest) params['digest'] = options.digest;
-
-		return this.handleResponse(this.api.get(`/agents/${environmentId}/images/updates/releasenotes`, { params }));
 	}
 
 	async tagImage(imageId: string, request: ImageTagRequest, environmentId: string): Promise<MessageResponse> {
@@ -223,24 +208,6 @@ class ImageService extends BaseAPIService {
 			params
 		});
 		return res.data;
-	}
-
-	async checkImageUpdateByID(imageId: string, environmentId: string): Promise<ImageUpdateResponse> {
-		return this.handleResponse(this.api.post(`/agents/${environmentId}/images/updates/check/${imageId}`, {}));
-	}
-
-	async checkAllImages(environmentId: string): Promise<Record<string, ImageUpdateResponse>> {
-		return this.handleResponse(this.api.post(`/agents/${environmentId}/images/updates/check`, {}, { params: { action: 'all' } }));
-	}
-
-	async checkMultipleImages(imageRefs: string[], environmentId: string): Promise<Record<string, ImageUpdateResponse>> {
-		return this.handleResponse(
-			this.api.post(`/agents/${environmentId}/images/updates/check`, { imageRefs }, { params: { action: 'batch' } })
-		);
-	}
-
-	async runAutoUpdate(options: UpdaterOptions | undefined, environmentId: string): Promise<UpdaterResult> {
-		return this.handleResponse(this.api.post(`/agents/${environmentId}/updater/run`, options));
 	}
 
 	async uploadImage(file: File, environmentId: string, onProgress?: UploadProgressCallback): Promise<ImageLoadResult> {

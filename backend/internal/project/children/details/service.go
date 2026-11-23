@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -25,13 +24,9 @@ import (
 
 	"getarcane.dev/arcane/v3/internal/database"
 	dockerInternal "getarcane.dev/arcane/v3/internal/docker"
-	"getarcane.dev/arcane/v3/internal/image"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/settings"
 	"getarcane.dev/arcane/v3/pkg/iconcatalog"
-	"getarcane.dev/arcane/v3/pkg/imageref"
 	"getarcane.dev/arcane/v3/pkg/projects"
-	"getarcane.dev/arcane/v3/pkg/selfcontainer"
 	"getarcane.dev/types/v3"
 )
 
@@ -39,16 +34,14 @@ type (
 	Service struct {
 		db              *database.DB
 		dockerService   *dockerInternal.DockerClientService
-		imageService    *image.ImageService
 		settingsService *settings.SettingsService
 	}
 )
 
-func New(db *database.DB, dockerService *dockerInternal.DockerClientService, imageService *image.ImageService, settingsService *settings.SettingsService) *Service {
+func New(db *database.DB, dockerService *dockerInternal.DockerClientService, settingsService *settings.SettingsService) *Service {
 	return &Service{
 		db:              db,
 		dockerService:   dockerService,
-		imageService:    imageService,
 		settingsService: settingsService,
 	}
 }
@@ -184,38 +177,6 @@ func (s *Service) IncludeFiles(ctx context.Context, composeFile string) []types.
 	return includeFiles
 }
 
-func (s *Service) ContainerUpdateInfo(ctx context.Context, services []types.ProjectRuntimeService) map[string]*types.ImageUpdateInfo {
-	var containers []container.Summary
-	for _, service := range services {
-		if service.ContainerID != "" {
-			containers = append(containers, container.Summary{
-				ID:      service.ContainerID,
-				Image:   service.Image,
-				ImageID: service.ImageID,
-				Labels:  service.ContainerLabels,
-			})
-		}
-	}
-	scoped, err := s.imageService.GetUpdateInfoByContainers(ctx, containers)
-	if err != nil {
-		slog.WarnContext(ctx, "failed to fetch project container update info", "error", err)
-		return nil
-	}
-	return scoped
-}
-
-func (s *Service) ServiceUpdateRecords(ctx context.Context, projectIDs []string) []imageupdate.ImageUpdateRecord {
-	if len(projectIDs) == 0 {
-		return nil
-	}
-	var records []imageupdate.ImageUpdateRecord
-	if err := s.db.WithContext(ctx).Where("project_id <> ? AND project_id IN ?", "", projectIDs).Find(&records).Error; err != nil {
-		slog.WarnContext(ctx, "failed to fetch project service update checks", "error", err)
-		return nil
-	}
-	return records
-}
-
 func Logs(ctx context.Context, dockerHost, projectName string, logsChan chan<- string, opts types.LogStreamOptions) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -263,143 +224,6 @@ func Logs(ctx context.Context, dockerHost, projectName string, logsChan chan<- s
 		}
 	}
 	return nil
-}
-
-func MergeProjectContainerUpdateInfo(base map[string]*types.ImageUpdateInfo, services []types.ProjectRuntimeService, scoped map[string]*types.ImageUpdateInfo) map[string]*types.ImageUpdateInfo {
-	result := make(map[string]*types.ImageUpdateInfo, len(base))
-	maps.Copy(result, base)
-	// Shared image results are dropped for references used only by services that opted out of update checks.
-	monitored := make(map[string]bool)
-	for _, service := range services {
-		imageRef := strings.TrimSpace(service.Image)
-		if imageRef == "" {
-			continue
-		}
-		monitored[imageRef] = monitored[imageRef] || !imageref.IsUpdateCheckDisabled(service.ContainerLabels)
-	}
-	for imageRef, isMonitored := range monitored {
-		if !isMonitored {
-			delete(result, imageRef)
-		}
-	}
-	seen := make(map[string]bool)
-	for _, service := range services {
-		info := scoped[service.ContainerID]
-		if info == nil {
-			continue
-		}
-		imageRef := strings.TrimSpace(service.Image)
-		if imageRef == "" {
-			continue
-		}
-		previous := kit.Ternary(seen[imageRef], result[imageRef], info)
-		result[imageRef] = &types.ImageUpdateInfo{ //exhaustruct:enforce
-			CheckTime: kit.Ternary(previous.CheckTime.After(info.CheckTime), previous.CheckTime, info.CheckTime),
-			UpdateType: kit.Ternary(
-				previous.LatestVersion != info.LatestVersion || previous.LatestDigest != info.LatestDigest || previous.UpdateType != info.UpdateType,
-				"",
-				info.UpdateType,
-			),
-			CurrentVersion: info.CurrentVersion,
-			LatestVersion: kit.Ternary(
-				previous.LatestVersion != info.LatestVersion || previous.LatestDigest != info.LatestDigest || previous.UpdateType != info.UpdateType,
-				"",
-				info.LatestVersion,
-			),
-			CurrentDigest: info.CurrentDigest,
-			LatestDigest: kit.Ternary(
-				previous.LatestVersion != info.LatestVersion || previous.LatestDigest != info.LatestDigest || previous.UpdateType != info.UpdateType,
-				"",
-				info.LatestDigest,
-			),
-			CurrentCreated: info.CurrentCreated,
-			LatestCreated: kit.Ternary(
-				previous.LatestVersion != info.LatestVersion || previous.LatestDigest != info.LatestDigest || previous.UpdateType != info.UpdateType,
-				nil,
-				info.LatestCreated,
-			),
-			Error:          cmp.Or(info.Error, previous.Error),
-			BlockedReason:  cmp.Or(info.BlockedReason, previous.BlockedReason),
-			AuthMethod:     info.AuthMethod,
-			AuthUsername:   info.AuthUsername,
-			AuthRegistry:   info.AuthRegistry,
-			ResponseTimeMs: info.ResponseTimeMs,
-			HasUpdate:      info.HasUpdate || previous.HasUpdate,
-			Blocked:        info.Blocked || previous.Blocked,
-			UsedCredential: info.UsedCredential,
-		}
-		seen[imageRef] = true
-	}
-	return result
-}
-
-func (s *Service) ConfiguredRuntimeServices(ctx context.Context, services []types.ProjectRuntimeService) []types.ProjectRuntimeService {
-	cli, err := s.dockerService.GetClient(ctx)
-	if err != nil {
-		return services
-	}
-	resolved := slices.Clone(services)
-	for i := range resolved {
-		resolved[i].Image = imageref.ConfiguredImage(ctx, cli, container.Summary{
-			ID:    resolved[i].ContainerID,
-			Image: resolved[i].Image,
-		})
-	}
-	return resolved
-}
-
-func ConfiguredRuntimeServiceUpdateInfo(services []composetypes.ServiceConfig, runtime []types.ProjectRuntimeService, scoped map[string]*types.ImageUpdateInfo) map[string]*types.ImageUpdateInfo {
-	configs := make(map[string]composetypes.ServiceConfig, len(services))
-	for _, service := range services {
-		configs[service.Name] = service
-	}
-	grouped := make(map[string][]types.ProjectRuntimeService)
-	for _, service := range runtime {
-		config, ok := configs[cmp.Or(service.Name, docker.ComposeServiceLabel(service.ContainerLabels))]
-		if !ok || scoped[service.ContainerID] == nil {
-			continue
-		}
-		if imageref.UpdatePolicyKey(config.Image, config.Labels) != imageref.UpdatePolicyKey(service.Image, service.ContainerLabels) {
-			continue
-		}
-		grouped[config.Name] = append(grouped[config.Name], types.ProjectRuntimeService{
-			ContainerLabels: service.ContainerLabels,
-			Image:           config.Image,
-			ContainerID:     service.ContainerID,
-		})
-	}
-	result := make(map[string]*types.ImageUpdateInfo, len(grouped))
-	for name, replicas := range grouped {
-		result[name] = MergeProjectContainerUpdateInfo(nil, replicas, scoped)[strings.TrimSpace(configs[name].Image)]
-	}
-	return result
-}
-
-func ExcludeHiddenRuntimeServices(details []types.Project) ([][]types.ProjectRuntimeService, map[string]map[string]bool, map[string]map[string]bool) {
-	visibleByIndex := make([][]types.ProjectRuntimeService, len(details))
-	hiddenServicesByProjectID := make(map[string]map[string]bool)
-	hiddenRefsByProjectID := make(map[string]map[string]bool)
-	for i := range details {
-		hiddenServices := make(map[string]bool)
-		hiddenRefs := make(map[string]bool)
-		visibleServices := make([]types.ProjectRuntimeService, 0, len(details[i].RuntimeServices))
-		for _, service := range details[i].RuntimeServices {
-			if hidden, _ := kit.ParseBool(service.ContainerLabels[selfcontainer.HiddenResourceLabel]); hidden {
-				hiddenServices[service.Name] = true
-				hiddenRefs[service.Image] = true
-				continue
-			}
-			visibleServices = append(visibleServices, service)
-		}
-		for _, service := range visibleServices {
-			delete(hiddenServices, service.Name)
-			delete(hiddenRefs, service.Image)
-		}
-		hiddenServicesByProjectID[details[i].ID] = hiddenServices
-		hiddenRefsByProjectID[details[i].ID] = hiddenRefs
-		visibleByIndex[i] = visibleServices
-	}
-	return visibleByIndex, hiddenServicesByProjectID, hiddenRefsByProjectID
 }
 
 func ResolveDetailsOverride(ctx context.Context, projectPath, overrideContent string, composeSelection []string) (fileName, content string) {

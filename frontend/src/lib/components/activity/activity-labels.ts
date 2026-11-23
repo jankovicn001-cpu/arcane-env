@@ -10,7 +10,6 @@ import {
 	PauseIcon,
 	PlayIcon,
 	RedeployIcon,
-	RefreshIcon,
 	RestartIcon,
 	SearchIcon,
 	ShieldCheckIcon,
@@ -39,7 +38,6 @@ const typeDisplay = new Map(
 		job_run: { label: m.activity_type_job_run, icon: ActivityIcon },
 		image_pull: { label: m.activity_type_image_pull, icon: DownloadIcon },
 		image_build: { label: m.activity_type_image_build, icon: HammerIcon },
-		image_update_check: { label: m.activity_type_image_update_check, icon: RefreshIcon },
 		image_patch: { label: m.activity_type_image_patch, icon: ShieldCheckIcon },
 		project_pull: { label: m.activity_type_project_pull, icon: DownloadIcon },
 		project_build: { label: m.activity_type_project_build, icon: HammerIcon },
@@ -59,7 +57,6 @@ const typeDisplay = new Map(
 		container_pause: { label: m.activity_type_container_pause, icon: PauseIcon },
 		container_unpause: { label: m.activity_type_container_unpause, icon: PlayIcon },
 		vulnerability_scan: { label: m.activity_type_vulnerability_scan, icon: SearchIcon },
-		auto_update: { label: m.auto_update, icon: RefreshIcon },
 		system_prune: { label: m.activity_type_system_prune, icon: BroomIcon },
 		resource_action: { label: m.activity_type_resource_action, icon: ActivityIcon }
 	} satisfies Record<ActivityType, { label: () => string; icon: IconType }>)

@@ -294,11 +294,8 @@ func TestReadOnlyBuiltInRolesContainOnlyNonMutatingActions(t *testing.T) {
 func TestBuiltInRoleUpdatePermissions(t *testing.T) {
 	deployer := BuiltInDeployerPermissions()
 	require.NotContains(t, deployer, PermContainersUpdate)
-	require.Contains(t, deployer, PermContainersAutoUpdate)
-	require.Contains(t, deployer, PermImageUpdatesApply)
+	require.Contains(t, deployer, PermContainersRedeploy)
 
-	require.Contains(t, BuiltInEditorPermissions(), PermImageUpdatesApply)
-	require.Contains(t, BuiltInNoShellEditorPermissions(), PermImageUpdatesApply)
 	require.NotContains(t, BuiltInNoShellEditorPermissions(), PermContainersExec)
 	require.Len(t, BuiltInNoShellEditorPermissions(), len(BuiltInEditorPermissions())-1)
 
@@ -306,7 +303,7 @@ func TestBuiltInRoleUpdatePermissions(t *testing.T) {
 		require.NotContains(t, permissions, PermDiagnosticsProfile, "%s must not receive %q", name, PermDiagnosticsProfile)
 	}
 	require.True(t, IsOrgLevel(PermDiagnosticsProfile))
-	require.True(t, IsEnvScoped(PermImageUpdatesApply))
+	require.True(t, IsEnvScoped(PermContainersRedeploy))
 }
 
 func TestBuiltInRoleSettingsPermissions(t *testing.T) {

@@ -70,26 +70,11 @@
 		<TagIcon class="size-3.5 shrink-0" />
 		{#if environment.id === '0'}
 			<span class="font-mono">{localDisplayVersion}</span>
-			{#if versionInformation?.updateAvailable}
-				<Badge variant="amber" size="sm">
-					{m.sidebar_update_available()}: {versionInformation.newestVersion}
-				</Badge>
-			{/if}
 		{:else if isLoadingVersion}
 			<Spinner class="size-3.5" />
 			<span>{m.common_action_checking()}</span>
 		{:else if remoteVersion}
 			<span class="font-mono">{remoteDisplayVersion}</span>
-			{#if remoteVersion.updateAvailable}
-				<Badge variant="amber" size="sm">
-					{m.sidebar_update_available()}: {remoteVersion.newestVersion}
-				</Badge>
-				{#if remoteVersion.releaseUrl}
-					<a href={remoteVersion.releaseUrl} target="_blank" rel="external noopener noreferrer" class="text-info hover:underline">
-						{m.version_info_view_release()}
-					</a>
-				{/if}
-			{/if}
 		{:else if currentStatus === 'online'}
 			<span>{m.environments_version_unavailable()}</span>
 		{:else if currentStatus === 'error'}

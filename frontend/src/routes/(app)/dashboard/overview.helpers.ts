@@ -14,7 +14,6 @@ import type { JobStatus } from '#lib/types/jobschedule.js';
 import type { RunStatus } from '#lib/types/scheduler.js';
 import type { SystemDiskUsage, SystemStats } from '#lib/types/system.js';
 import type { DashboardEnvironmentOverview } from '#lib/types/ui/dashboard.js';
-import type { VersionInfo } from '#lib/types/version.js';
 import type { RiskFinding } from '#lib/types/vulnerability.js';
 import { isEnvironmentOnline, resolveEnvironmentStatus } from '#lib/utils/docker.js';
 import type { EnvironmentRow } from '#lib/utils/environments.js';
@@ -27,9 +26,8 @@ export function shouldLoadEnvironment(environment: Environment): boolean {
 export function createBaseEnvironmentOverview(environment: Environment): DashboardEnvironmentOverview {
 	return {
 		environment,
-		containers: { runningContainers: 0, stoppedContainers: 0, totalContainers: 0, unhealthyContainers: 0, updatesAvailable: 0 },
+		containers: { runningContainers: 0, stoppedContainers: 0, totalContainers: 0, unhealthyContainers: 0 },
 		imageUsageCounts: { imagesInuse: 0, imagesUnused: 0, totalImages: 0, totalImageSize: 0 },
-		updates: 0,
 		vulnerabilities: 0
 	};
 }
@@ -140,7 +138,6 @@ export function getGpuMetricLabel(stats: SystemStats | null): string {
 }
 
 export type AttentionSeverity = 'critical' | 'warning' | 'info';
-export type AttentionTarget = { kind: 'link'; href: string } | { kind: 'upgrade' };
 export type AttentionSort = 'impact' | 'newest';
 
 export interface AttentionItem {
@@ -151,7 +148,7 @@ export interface AttentionItem {
 	detail: string;
 	timestamp: string | null;
 	actionLabel: string;
-	target: AttentionTarget;
+	href: string;
 	count?: number;
 	fullId?: string;
 	activityKey?: string;
@@ -188,8 +185,6 @@ export interface AttentionSources {
 	jobs: EnvironmentJob[];
 	activityGroups: CollapsedActivity[];
 	expiringApiKeys: ApiKey[];
-	versions: Map<string, VersionInfo>;
-	upgradable: ReadonlySet<string>;
 	now: Temporal.Instant;
 }
 
@@ -235,9 +230,6 @@ export function collapseActivities(activities: Activity[]): CollapsedActivity[] 
 
 function failingActivityHref(activity: Activity, environmentId: string): string {
 	switch (activity.type) {
-		case 'image_update_check':
-		case 'auto_update':
-			return resolve('/(app)/updates');
 		case 'vulnerability_scan':
 		case 'image_patch':
 			return resolve('/(app)/security');
@@ -279,7 +271,7 @@ function failedJobAndRepeatedFailureItems(sources: AttentionSources): AttentionI
 			detail: job.lastError || job.lastRun?.outcome.message || '',
 			timestamp: job.lastRun?.finishedAt ?? job.lastRun?.updatedAt ?? null,
 			actionLabel: m.common_view(),
-			target: { kind: 'link', href: failedJobHref(environmentId, job.id) },
+			href: failedJobHref(environmentId, job.id),
 			count: group?.ids.length,
 			activityKey: group?.key
 		})),
@@ -306,7 +298,7 @@ function failedJobAndRepeatedFailureItems(sources: AttentionSources): AttentionI
 					detail: activity.error || formatRelativeTime(timestamp),
 					timestamp,
 					actionLabel: m.common_view(),
-					target: { kind: 'link', href: failingActivityHref(activity, environmentId) },
+					href: failingActivityHref(activity, environmentId),
 					count: ids.length,
 					activityKey: key
 				};
@@ -368,12 +360,9 @@ function containerEventItems(events: EnvironmentEvent[], now: Temporal.Instant):
 			detail: formatRelativeTime(event.timestamp),
 			timestamp: event.timestamp,
 			actionLabel: m.common_logs(),
-			target: {
-				kind: 'link',
-				href: resolve(`/(app)/containers/[containerId]?tab=logs&env=${encodeURIComponent(environmentId)}`, {
-					containerId: event.resourceId ?? ''
-				})
-			},
+			href: resolve(`/(app)/containers/[containerId]?tab=logs&env=${encodeURIComponent(environmentId)}`, {
+				containerId: event.resourceId ?? ''
+			}),
 			count: failures.get(key),
 			fullId: sharedName ? event.resourceId : undefined
 		};
@@ -395,7 +384,7 @@ function hardenedImageItems(environmentId: string, counts: ImageUsageCounts | un
 		detail: m.hardened_images_eol_detail(),
 		timestamp: null,
 		actionLabel: m.common_view(),
-		target: { kind: 'link', href: resolve('/(app)/images') }
+		href: resolve('/(app)/images')
 	});
 	const endOfLife = counts?.hardenedEndOfLife ?? 0;
 	const endingSoon = counts?.hardenedEndingSoon ?? 0;
@@ -424,7 +413,7 @@ export function buildAttentionItems(sources: AttentionSources): AttentionItem[] 
 			detail: soonestKeyExpiry ? m.expires_time({ time: formatRelativeTime(soonestKeyExpiry) }) : '',
 			timestamp: null,
 			actionLabel: m.manage(),
-			target: { kind: 'link', href: resolve('/(app)/system/api-keys') }
+			href: resolve('/(app)/system/api-keys')
 		});
 	}
 
@@ -442,7 +431,7 @@ export function buildAttentionItems(sources: AttentionSources): AttentionItem[] 
 				detail,
 				timestamp: environment.lastSeen ?? null,
 				actionLabel: m.common_view(),
-				target: { kind: 'link', href: environmentDetailHref(environment.id) }
+				href: environmentDetailHref(environment.id)
 			};
 		}),
 		...online.flatMap((environment): AttentionItem[] => {
@@ -459,7 +448,7 @@ export function buildAttentionItems(sources: AttentionSources): AttentionItem[] 
 					detail: m.health_status_unhealthy(),
 					timestamp: null,
 					actionLabel: m.common_view(),
-					target: { kind: 'link', href: resolve('/(app)/containers') }
+					href: resolve('/(app)/containers')
 				}
 			];
 		}),
@@ -474,7 +463,7 @@ export function buildAttentionItems(sources: AttentionSources): AttentionItem[] 
 				detail: `${finding.pkgName} → ${finding.fixedVersion || m.vuln_no_fix()}`,
 				timestamp: null,
 				actionLabel: m.common_view(),
-				target: { kind: 'link', href: resolve('/(app)/security') }
+				href: resolve('/(app)/security')
 			})),
 		...online.flatMap((environment) => hardenedImageItems(environment.id, sources.images.get(environment.id))),
 		...online.flatMap((environment): AttentionItem[] => {
@@ -489,31 +478,12 @@ export function buildAttentionItems(sources: AttentionSources): AttentionItem[] 
 					detail: disk.detail,
 					timestamp: null,
 					actionLabel: m.common_view(),
-					target: { kind: 'link', href: environmentDetailHref(environment.id) }
+					href: environmentDetailHref(environment.id)
 				}
 			];
 		}),
 		...failedJobAndRepeatedFailureItems(sources),
-		...apiKeyItems,
-		...online.flatMap((environment): AttentionItem[] => {
-			const version = sources.versions.get(environment.id);
-			if (!version?.updateAvailable) return [];
-			const upgradable = sources.upgradable.has(environment.id);
-			return [
-				{
-					key: `version:${environment.id}`,
-					severity: 'info',
-					environmentId: environment.id,
-					title: m.sidebar_update_available_tooltip({
-						version: version.newestVersion || version.newestDigest?.slice(0, 12) || ''
-					}),
-					detail: version.displayVersion || version.currentTag || version.currentVersion,
-					timestamp: version.releasedAt ?? null,
-					actionLabel: upgradable ? m.upgrade() : m.common_view(),
-					target: upgradable ? { kind: 'upgrade' } : { kind: 'link', href: environmentDetailHref(environment.id) }
-				}
-			];
-		})
+		...apiKeyItems
 	];
 }
 

@@ -51,7 +51,6 @@ type (
 	}
 
 	projectListOptions struct {
-		projectsUpdatesFilter  string
 		projectsStatusFilter   string
 		projectsArchivedFilter string
 		projectsLabelFilter    string
@@ -94,10 +93,8 @@ func Command() *cobra.Command {
 		newUnarchiveCmd(),
 		newBuildCmd(),
 		newRunJobCmd(),
-		newUpdateServicesCmd(),
 		newWorkspaceCmd(),
 		newListCmd(),
-		newUpdatesCmd(),
 		newGetCmd(),
 		newUpCmd(),
 		newDownCmd(),
@@ -128,26 +125,9 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&opts.limitFlag, "limit", "n", 20, "Number of projects to show")
 	cmd.Flags().IntVar(&opts.startFlag, "start", 0, cmdutil.StartFlagUsage)
 	cmd.Flags().BoolVarP(&opts.allFlag, "all", "a", false, cmdutil.AllFlagUsage+", including archived projects")
-	cmdutil.EnumVarP(cmd, cmd.Flags(), &opts.projectsUpdatesFilter, "updates", "", "", "Filter by update status", "has_update", "up_to_date", "error", "unknown")
 	cmd.Flags().StringVar(&opts.projectsStatusFilter, "status", "", "Filter by status (comma-separated: running, stopped, partially running)")
 	cmdutil.EnumVarP(cmd, cmd.Flags(), &opts.projectsArchivedFilter, "archived", "", "", "Archived filter", "true", "false", "all")
 	cmd.Flags().StringVar(&opts.projectsLabelFilter, "label", "", "Filter by container label (key or key=value)")
-	cmdutil.SetScope(cmdutil.ScopeMerged, cmd)
-	return cmd
-}
-
-func newUpdatesCmd() *cobra.Command {
-	var opts projectListOptions
-	cmd := &cobra.Command{
-		Use:          "updates",
-		Short:        "List projects with available updates",
-		SilenceUsage: true,
-		Args:         cobra.NoArgs,
-		RunE:         func(cmd *cobra.Command, args []string) error { return runProjectList(cmd, opts) },
-	}
-	cmd.Flags().IntVarP(&opts.limitFlag, "limit", "n", 20, "Number of projects to show")
-	cmd.Flags().IntVar(&opts.startFlag, "start", 0, cmdutil.StartFlagUsage)
-	cmd.Flags().BoolVarP(&opts.allFlag, "all", "a", false, cmdutil.AllFlagUsage)
 	cmdutil.SetScope(cmdutil.ScopeMerged, cmd)
 	return cmd
 }
@@ -793,10 +773,6 @@ func runProjectList(cmd *cobra.Command, opts projectListOptions) error {
 	}
 
 	query := url.Values{}
-	updatesFilter := kit.Ternary(cmd.Name() == "updates", "has_update", strings.TrimSpace(opts.projectsUpdatesFilter))
-	if updatesFilter != "" {
-		query.Set("updates", updatesFilter)
-	}
 	if opts.projectsStatusFilter != "" {
 		query.Set("status", opts.projectsStatusFilter)
 	}
@@ -812,44 +788,20 @@ func runProjectList(cmd *cobra.Command, opts projectListOptions) error {
 		query.Set("archived", "all")
 	}
 
-	if updatesFilter != "" && !cmdutil.JSONOutputEnabled(cmd) {
-		output.Header("Project Updates")
-	}
-
 	return cmdutil.RunList(cmd, c, cmdutil.ListSpec[types.Project]{
 		Resource: "projects",
 		Endpoint: clitypes.Projects(c.EnvID()),
 		Params:   cmdutil.ListParams{Resource: "projects", Limit: opts.limitFlag, FallbackDefault: 20, Start: opts.startFlag, All: opts.allFlag},
 		Query:    query,
-		Headers:  kit.Ternary(updatesFilter != "", []string{"ID", "NAME", "STATUS", "UPDATES", "IMAGES", "UPDATED"}, []string{"ID", "NAME", "STATUS", "SERVICES", "RUNNING", "CREATED"}),
+		Headers:  []string{"ID", "NAME", "STATUS", "SERVICES", "RUNNING", "CREATED"},
 		Row: func(proj types.Project) []string {
-			if updatesFilter == "" {
-				return []string{
-					proj.ID,
-					proj.Name,
-					proj.Status,
-					strconv.Itoa(proj.ServiceCount),
-					strconv.Itoa(proj.RunningCount),
-					proj.CreatedAt,
-				}
-			}
-			imageCount := 0
-			updatedCount := 0
-			status := "unknown"
-			if proj.UpdateInfo != nil {
-				imageCount = proj.UpdateInfo.ImageCount
-				updatedCount = proj.UpdateInfo.ImagesWithUpdates
-				if strings.TrimSpace(proj.UpdateInfo.Status) != "" {
-					status = proj.UpdateInfo.Status
-				}
-			}
 			return []string{
 				proj.ID,
 				proj.Name,
 				proj.Status,
-				status,
-				strconv.Itoa(imageCount),
-				strconv.Itoa(updatedCount),
+				strconv.Itoa(proj.ServiceCount),
+				strconv.Itoa(proj.RunningCount),
+				proj.CreatedAt,
 			}
 		},
 	})

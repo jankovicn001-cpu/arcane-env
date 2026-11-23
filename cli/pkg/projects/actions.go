@@ -9,7 +9,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -214,38 +213,6 @@ func newRunJobCmd() *cobra.Command {
 				failureMessage: "failed to run job " + args[1],
 				successMessage: "Job " + args[1] + " completed successfully in project %s",
 				unbounded:      true,
-			})
-		},
-	}
-}
-
-func newUpdateServicesCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:          "upgrade <project-id|name> [services...]",
-		Short:        "Pull latest images and recreate services (all services when none are given)",
-		Args:         cobra.MinimumNArgs(1),
-		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := cmdutil.ClientFromCommand(cmd)
-			if err != nil {
-				return err
-			}
-
-			resolved, _, err := ProjectRef.Resolve(cmd.Context(), c, args[0], false)
-			if err != nil {
-				return err
-			}
-
-			c.SetTimeout(30 * time.Minute)
-
-			return cmdutil.Run(cmd, c, cmdutil.Spec[types.MessageResponse]{
-				Method:         http.MethodPost,
-				Path:           clitypes.ProjectAction(c.EnvID(), resolved.ID, "updateservices", args[1:]),
-				FailureMessage: "failed to update project services",
-				Render: func(types.MessageResponse) error {
-					output.Success("Services updated successfully for project %s", resolved.Name)
-					return nil
-				},
 			})
 		},
 	}

@@ -8,7 +8,6 @@
 	import RowActionsMenu from '#lib/components/arcane-table/row-actions-menu.svelte';
 	import { PortBadge } from '#lib/components/badges/index.js';
 	import IconImage from '#lib/components/icon-image.svelte';
-	import ImageUpdateItem from '#lib/components/image-update-item.svelte';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import {
 		PlayIcon,
@@ -22,25 +21,23 @@
 	} from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import { projectService } from '#lib/services/project-service.js';
-	import type { ImageUpdateResponse } from '#lib/types/imageupdate.js';
 	import type { ProjectPreStartHook, ProjectRuntimeService } from '#lib/types/project.js';
 	import { cn } from '#lib/utils.js';
 	import { activityToastOptions, extractActivityId } from '#lib/utils/activity-toast.js';
 	import { extractApiErrorMessage, handleApiResultWithCallbacks } from '#lib/utils/api.js';
 	import { hasPermission } from '#lib/utils/auth.js';
 	import { confirmAndRemoveContainer, runContainerLifecycleAction } from '#lib/utils/container-actions.js';
-	import { getThemedIconUrl, parseImageRef } from '#lib/utils/docker.js';
+	import { getThemedIconUrl } from '#lib/utils/docker.js';
 	import { tryCatch } from '#lib/utils/try-catch.js';
 
 	interface Props {
 		services?: ProjectRuntimeService[];
 		projectId?: string;
 		environmentId: string;
-		updateInfoByRef?: Record<string, ImageUpdateResponse>;
 		onRefresh?: () => Promise<void>;
 	}
 
-	let { services = [], projectId, environmentId, updateInfoByRef = {}, onRefresh }: Props = $props();
+	let { services = [], projectId, environmentId, onRefresh }: Props = $props();
 
 	function serviceImageRef(service: ProjectRuntimeService): string {
 		return service.serviceConfig?.image || service.image || '';
@@ -250,21 +247,8 @@
 						</RowActionsMenu>
 					{/if}
 				</div>
-				{#if serviceImageRef(item) || item.serviceConfig?.ports?.length || item.ports?.length}
+				{#if item.serviceConfig?.ports?.length || item.ports?.length}
 					<div class="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pl-11">
-						{#if serviceImageRef(item)}
-							{@const imageRef = serviceImageRef(item)}
-							{@const parsed = parseImageRef(imageRef)}
-							<div class="flex shrink-0">
-								<ImageUpdateItem
-									updateInfo={updateInfoByRef[imageRef]}
-									{imageRef}
-									repo={parsed.repo}
-									tag={parsed.tag}
-									{environmentId}
-								/>
-							</div>
-						{/if}
 						{#if item.serviceConfig?.ports?.length}
 							<div class="min-w-0"><PortBadge ports={item.serviceConfig.ports} {environmentId} wrap={false} /></div>
 						{:else if item.ports?.length}

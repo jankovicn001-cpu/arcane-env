@@ -25,11 +25,10 @@ type (
 	}
 
 	Service struct {
-		expectations       map[expectation]time.Time
-		windows            map[windowKey]window
-		now                func() time.Time
-		updatingContainers func() []string
-		mu                 sync.Mutex
+		expectations map[expectation]time.Time
+		windows      map[windowKey]window
+		now          func() time.Time
+		mu           sync.Mutex
 	}
 )
 
@@ -131,24 +130,7 @@ func (c *Service) beginWindows(keys []windowKey) func() {
 	})
 }
 
-func (c *Service) SetUpdatingContainers(source func() []string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.updatingContainers = source
-}
-
 func (c *Service) ShouldSuppress(resourceType, actorID, actorName, composeProject string) bool {
-	c.mu.Lock()
-	updating := c.updatingContainers
-	c.mu.Unlock()
-	// The updater records stop after Docker returns, so active updates also need correlation.
-	if resourceType == "container" && updating != nil {
-		for _, id := range updating() {
-			if id != "" && (id == actorID || idMatches(resourceType, id, actorID)) {
-				return true
-			}
-		}
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.prune(c.now())

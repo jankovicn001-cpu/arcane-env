@@ -13,11 +13,9 @@
 		total: number;
 		images: number;
 		podCount: number | null;
-		updates: number;
 		reclaimable: number | null;
 		risk: { score: number; band: RiskBand; status: VulnerabilityScoreStatus } | null;
 		versionText: string | null;
-		updateAvailable: boolean;
 		menuButtons: ActionButton[];
 	}
 </script>
@@ -30,7 +28,6 @@
 	import MetricRing, { type MetricRingVariant } from '#lib/components/metric-ring.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
-	import { UpdateIcon, VerifiedCheckIcon, type IconType } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import { featureStore } from '#lib/stores/features.store.svelte.js';
 	import { cn } from '#lib/utils.js';
@@ -55,20 +52,6 @@
 		'h-9 px-3 text-left align-middle text-xs-plus leading-5 font-medium whitespace-nowrap text-muted-foreground first:pl-2 last:pr-2';
 	const bodyCell = 'px-3 py-2.5 align-middle first:pl-2 last:pr-2';
 </script>
-
-{#snippet actionCount(count: number, icon: IconType)}
-	{@const Icon = count > 0 ? icon : VerifiedCheckIcon}
-	<a
-		href={resolve('/(app)/updates')}
-		class={cn(
-			'inline-flex items-center gap-1.5 text-sm tabular-nums transition-colors hover:underline',
-			count === 0 ? 'text-muted-foreground' : 'text-update'
-		)}
-	>
-		<Icon class={cn('size-3.5 shrink-0', count === 0 && 'text-success')} />
-		{count}
-	</a>
-{/snippet}
 
 {#snippet riskScore(risk: EnvironmentTableRow['risk'])}
 	{#if risk}
@@ -120,12 +103,11 @@
 		<thead>
 			<tr class="border-b border-border/40">
 				<th class={headCell}>{m.common_name()}</th>
-				<th class={headCell}>{m.common_version()}</th>
+				<th class={headCell}>{m.tag()}</th>
 				<th class={headCell}>{m.common_status()}</th>
 				<th class={cn(headCell, 'text-right')}>{m.containers()}</th>
 				<th class={cn(headCell, 'text-right')}>{m.images()}</th>
 				{#if showPods}<th class={cn(headCell, 'text-right')}>{m.podman_pods_title()}</th>{/if}
-				<th class={cn(headCell, 'text-right')}>{m.updates()}</th>
 				{#if showVulnerabilities}<th class={cn(headCell, 'text-right')}>{m.risk()}</th>{/if}
 				<th class={cn(headCell, 'text-right')}>{m.reclaimable()}</th>
 				<th class={cn(headCell, 'text-right')}>{m.cpu_usage()}</th>
@@ -154,12 +136,7 @@
 					</td>
 					<td class={bodyCell}>
 						{#if row.versionText}
-							<Badge variant="gray" size="sm" mono>
-								{row.versionText}
-								{#if row.updateAvailable}
-									<span class="ml-1.5 inline-flex h-2 w-2 rounded-full bg-warning"></span>
-								{/if}
-							</Badge>
+							<Badge variant="gray" size="sm" mono>{row.versionText}</Badge>
 						{:else if row.loading}
 							<Skeleton class="h-4 w-20" />
 						{:else}
@@ -173,7 +150,7 @@
 						</span>
 					</td>
 					{#if !row.online}
-						<td class={bodyCell} colspan={7 + Number(showVulnerabilities) + Number(showPods)}>
+						<td class={bodyCell} colspan={6 + Number(showVulnerabilities) + Number(showPods)}>
 							<span class="text-sm text-muted-foreground">
 								{row.environment.lastSeen
 									? m.offline_last_seen({ time: formatRelativeTime(row.environment.lastSeen) })
@@ -181,7 +158,7 @@
 							</span>
 						</td>
 					{:else if row.loading}
-						<td class={bodyCell} colspan={7 + Number(showVulnerabilities) + Number(showPods)}
+						<td class={bodyCell} colspan={6 + Number(showVulnerabilities) + Number(showPods)}
 							><Skeleton class="h-4 w-full max-w-md" /></td
 						>
 					{:else}
@@ -196,7 +173,6 @@
 								{/if}
 							</td>
 						{/if}
-						<td class={cn(bodyCell, 'text-right')}>{@render actionCount(row.updates, UpdateIcon)}</td>
 						{#if showVulnerabilities}
 							<td class={cn(bodyCell, 'text-right')}>
 								{#if featureStore.isEnabled('vulnerabilityManagement', row.environment.id)}

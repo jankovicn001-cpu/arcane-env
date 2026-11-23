@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/yamux"
@@ -16,8 +14,6 @@ import (
 
 	"getarcane.dev/arcane/v3/pkg/httpx"
 )
-
-const legacyUpgradePathPrefix = "/api/environments/0/system/upgrade"
 
 func (c *TunnelClient) serveMuxSession(ctx context.Context, rw *muxConn, streamWindowMiB int, leased bool) error {
 	compress, err := gzhttp.NewWrapper(
@@ -41,12 +37,6 @@ func (c *TunnelClient) serveMuxSession(ctx context.Context, rw *muxConn, streamW
 		// The agent command allowlist stays the security boundary for what the manager may call.
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			stream := httpx.IsWebSocketUpgradeRequest(r)
-			if rest, legacy := strings.CutPrefix(r.URL.Path, legacyUpgradePathPrefix); legacy {
-				r.URL = &url.URL{
-					Path:     "/api/agents/0/system/upgrade" + rest,
-					RawQuery: r.URL.RawQuery,
-				}
-			}
 			if ResolveCommandName(r.Method, r.URL.EscapedPath(), stream).IsAbsent() {
 				slog.WarnContext(r.Context(), "Rejected agent tunnel request outside the command allowlist", "method", r.Method, "path", r.URL.Path, "websocket", stream)
 				w.Header().Set("Content-Type", "application/json")

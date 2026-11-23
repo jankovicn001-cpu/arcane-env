@@ -106,6 +106,13 @@ export const queryKeys = {
 		detail: (roleId: string) => ['roles', 'detail', roleId] as const,
 		permissionsManifest: () => ['roles', 'permissions-manifest'] as const
 	},
+	userGroups: {
+		all: ['user-groups'] as const,
+		list: () => ['user-groups', 'list'] as const,
+		detail: (groupId: string) => ['user-groups', 'detail', groupId] as const,
+		members: (groupId: string) => ['user-groups', 'members', groupId] as const,
+		assignments: (groupId: string) => ['user-groups', 'assignments', groupId] as const
+	},
 	users: {
 		all: ['users'] as const,
 		list: (options: SearchPaginationSortRequest) => ['users', stableSerialize(options)] as const
@@ -126,6 +133,11 @@ export const queryKeys = {
 		settings: (environmentId: string) => ['environment-settings', environmentId] as const,
 		settingsAcross: (scope: string) => ['environment-settings', scope, 'across'] as const,
 		enrollmentTokens: ['enrollment-tokens'] as const
+	},
+	environmentGroups: {
+		all: ['environment-groups'] as const,
+		list: () => ['environment-groups', 'list'] as const,
+		access: (groupId: string) => ['environment-groups', 'access', groupId] as const
 	},
 	gitRepositories: {
 		all: ['git-repositories'] as const,
@@ -187,12 +199,7 @@ export const queryKeys = {
 	},
 	system: {
 		appVersion: () => ['system', 'app-version'] as const,
-		latestRelease: () => ['github', 'getarcaneapp', 'arcane', 'latest-release'] as const,
-		upgradeAvailable: (scope: 'mobile-nav' | 'sidebar') => ['system', 'upgrade-available', scope] as const,
-		environmentUpgradeAvailable: (environmentId: string) => ['system', environmentId, 'upgrade-available'] as const,
-		upgradeHealth: (environmentId: string) => ['system', environmentId, 'upgrade-health'] as const,
 		versionInfo: (environmentId: string) => ['system', environmentId, 'version-info'] as const,
-		environmentVersions: (scope: string) => ['environment-versions', scope] as const,
 		dockerInfo: (environmentId: string) => ['system', environmentId, 'docker-info'] as const
 	},
 	containers: {
@@ -217,9 +224,6 @@ export const queryKeys = {
 		environment: (environmentId: string) => ['image', environmentId] as const,
 		history: (environmentId: string, imageId: string) => ['image', environmentId, imageId, 'history'] as const,
 		detail: (environmentId: string, imageId: string) => ['image', environmentId, imageId] as const,
-		updateCheck: (environmentId: string, imageId: string) => ['image-update', environmentId, imageId] as const,
-		releaseNotes: (environmentId: string, imageRef: string, version: string, digest: string) =>
-			['image-release-notes', environmentId, imageRef, version, digest] as const,
 		builds: (environmentId: string) => ['images', environmentId, 'builds'] as const,
 		buildsList: (environmentId: string, options: SearchPaginationSortRequest) =>
 			['images', environmentId, 'builds', stableSerialize(options)] as const,
@@ -235,9 +239,6 @@ export const queryKeys = {
 		listPrefix: (scope: string) => ['projects', scope] as const,
 		list: (environmentId: string, options: SearchPaginationSortRequest) =>
 			['projects', environmentId, stableSerialize(options)] as const,
-		checkUpdates: (environmentId: string) => ['projects', environmentId, 'check-updates'] as const,
-		detailCheckUpdates: (environmentId: string, projectId: string) =>
-			['project', environmentId, projectId, 'check-updates'] as const,
 		statusCounts: (environmentId: string) => ['projects', environmentId, 'status-counts'] as const,
 		tags: (environmentId: string) => ['projects', environmentId, 'tags'] as const,
 		directories: (environmentId: string, view: 'projects' | 'settings') =>

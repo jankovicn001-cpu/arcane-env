@@ -23,13 +23,7 @@ export function toAppVersionInformation(data: Partial<VersionInfo>): VersionInfo
 		enabledFeatures: data.enabledFeatures ?? [],
 		buildTime: data.buildTime,
 		isSemverVersion: data.isSemverVersion || false,
-		isStableVersion: data.isStableVersion || false,
-		newestVersion: data.newestVersion,
-		newestDigest: data.newestDigest,
-		updateAvailable: data.updateAvailable || false,
-		releaseUrl: data.releaseUrl,
-		releaseNotes: data.releaseNotes,
-		releasedAt: data.releasedAt
+		isStableVersion: data.isStableVersion || false
 	};
 }
 
@@ -39,34 +33,7 @@ async function getVersionInformation(): Promise<VersionInfo> {
 	return toAppVersionInformation(response.data.data);
 }
 
-async function getNewestVersion(): Promise<string | undefined> {
-	const info = await getVersionInformation();
-	return info.newestVersion;
-}
-
-async function getReleaseUrl(): Promise<string | undefined> {
-	const info = await getVersionInformation();
-	return info.releaseUrl;
-}
-
-async function getLatestGitHubRelease(): Promise<{ tag: string; body: string; publishedAt: string; url: string }> {
-	const res = await fetch('https://api.github.com/repos/getarcaneapp/arcane/releases/latest', {
-		headers: { Accept: 'application/vnd.github+json' }
-	});
-	if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
-	const data: { tag_name?: string; body?: string; published_at?: string; html_url?: string } = await res.json();
-	return {
-		tag: data.tag_name ?? '',
-		body: data.body ?? '',
-		publishedAt: data.published_at ?? '',
-		url: data.html_url ?? ''
-	};
-}
-
 export default {
 	getVersionInformation,
-	getLatestGitHubRelease,
-	getNewestVersion,
-	getReleaseUrl,
 	getCurrentVersion
 };

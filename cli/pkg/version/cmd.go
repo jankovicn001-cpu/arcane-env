@@ -58,12 +58,6 @@ func Command() *cobra.Command {
 			if result.Revision != "" {
 				output.KeyValue("Revision", result.Revision)
 			}
-			if result.UpdateAvailable {
-				output.Warning("Update available! New version: %s", result.NewestVersion)
-				if result.ReleaseURL != "" {
-					output.Info("Download at: %s", result.ReleaseURL)
-				}
-			}
 
 			return nil
 		},

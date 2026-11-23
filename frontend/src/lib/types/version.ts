@@ -12,10 +12,4 @@ export type VersionInfo = {
 	buildTime?: string;
 	isSemverVersion: boolean;
 	isStableVersion: boolean;
-	newestVersion?: string;
-	newestDigest?: string;
-	updateAvailable: boolean;
-	releaseUrl?: string;
-	releaseNotes?: string;
-	releasedAt?: string;
 };

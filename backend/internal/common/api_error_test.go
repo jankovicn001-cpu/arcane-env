@@ -21,3 +21,13 @@ func TestToAPIErrorMapsClassifiedValidationDetails(t *testing.T) {
 	require.Equal(t, "Name is required", apiErr.Message)
 	require.Equal(t, map[string]any{"field": "name"}, apiErr.Details)
 }
+
+func TestToAPIErrorMapsClassifiedConflictDetails(t *testing.T) {
+	apiErr := ToAPIError(Classify(ErrConflict, &types.FieldError{Field: "name", Err: errors.New("name already in use")}))
+
+	require.Equal(t, http.StatusConflict, apiErr.HTTPStatus())
+	require.Equal(t, APIErrorCodeConflict, apiErr.Code)
+	require.Equal(t, map[string]any{"field": "name"}, apiErr.Details)
+
+	require.Nil(t, ToAPIError(Classify(ErrConflict, errors.New("busy"))).Details)
+}

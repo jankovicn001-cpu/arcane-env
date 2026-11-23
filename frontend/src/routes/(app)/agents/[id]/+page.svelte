@@ -8,6 +8,7 @@
 	import AgentCommandBlock from '#lib/components/agent-command-block.svelte';
 	import { ArcaneButton } from '#lib/components/arcane-button/index.js';
 	import { openConfirmDialog } from '#lib/components/confirm-dialog/index.js';
+	import SelectWithLabel from '#lib/components/form/select-with-label.svelte';
 	import SettingsRow from '#lib/components/settings/settings-row.svelte';
 	import SettingsSection from '#lib/components/settings/settings-section.svelte';
 	import { EmptyState } from '#lib/components/states/index.js';
@@ -21,6 +22,7 @@
 	import { AlertIcon, ResetIcon, ConnectionIcon, SettingsIcon, InfoIcon, JobsIcon } from '#lib/icons/index.js';
 	import TabbedPageLayout from '#lib/layouts/tabbed-page-layout.svelte';
 	import { m } from '#lib/paraglide/messages.js';
+	import { environmentGroupListQuery } from '#lib/query/environment-groups.js';
 	import { environmentDetailQuery } from '#lib/query/environments.js';
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { environmentVersionInfoQuery } from '#lib/query/system.js';
@@ -30,8 +32,9 @@
 	import { featureStore } from '#lib/stores/features.store.svelte.js';
 	import type { DeploymentSnippet, Environment } from '#lib/types/environment.js';
 	import type { FeatureID } from '#lib/types/features.js';
+	import { GLOBAL_SCOPE } from '#lib/types/role.js';
 	import { extractApiErrorMessage, handleApiResultWithCallbacks } from '#lib/utils/api.js';
-	import { hasPermission } from '#lib/utils/auth.js';
+	import { hasPermission, isGlobalAdmin } from '#lib/utils/auth.js';
 	import { createDashboardWidget, pinDashboardAction } from '#lib/utils/dashboard-layout.js';
 	import { isEnvironmentOnline, resolveEnvironmentStatus } from '#lib/utils/docker.js';
 	import { changedFields } from '#lib/utils/payload.js';
@@ -57,6 +60,18 @@
 	let loadedEnvironment = $derived((lastEnvironment = data.environment ?? lastEnvironment));
 	const environmentQuery = createQuery(() => environmentDetailQuery(loadedEnvironment.id));
 	const environment = $derived(environmentQuery.data ?? loadedEnvironment);
+	const environmentGroupsQuery = createQuery(() => ({
+		...environmentGroupListQuery(),
+		enabled: hasPermission('environments:list', GLOBAL_SCOPE)
+	}));
+	// The agent's own group stays listed when the groups cannot be read.
+	const environmentGroupOptions = $derived([
+		{ value: '', label: m.none() },
+		...(environmentGroupsQuery.data ?? (environment.group ? [environment.group] : [])).map((group) => ({
+			value: group.id,
+			label: group.name
+		}))
+	]);
 	const liveEnvironment = $derived(
 		environment.id === '0' ? undefined : environmentStore.available.find((env) => env.id === environment.id)
 	);
@@ -243,6 +258,7 @@
 		featureVulnerabilityManagementEnabled: Boolean(settings?.values.featureVulnerabilityManagementEnabled),
 		featureSwarmEnabled: Boolean(settings?.values.featureSwarmEnabled),
 		name: loadedEnvironment.name,
+		groupId: loadedEnvironment.groupId ?? '',
 		enabled: loadedEnvironment.enabled
 	} as EnvironmentFormValues);
 
@@ -258,12 +274,12 @@
 		) {
 			throw new Error(m.features_unavailable());
 		}
-		if (formData.name !== environment.name || formData.enabled !== environment.enabled) {
-			const update = changedFields(environment, environmentUpdateSchema.parse(formData));
+		const savedEnvironment = { ...environment, groupId: environment.groupId ?? '' };
+		const update = changedFields(savedEnvironment, environmentUpdateSchema.parse(formData));
+		if (Object.keys(update).length > 0) {
 			const result = await tryCatch(environmentManagementService.update(environmentId, update));
-			if (result.error) {
-				throw new Error(result.error.message);
-			}
+			// Rethrown as is, so a field error such as an unknown group lands on its input.
+			if (result.error) throw result.error;
 			queryClient.setQueryData(environmentDetailQuery(environmentId).queryKey, result.data);
 		}
 		if (settings && changedFeatures.length > 0) {
@@ -313,6 +329,7 @@
 			getCurrentSettings: () => ({
 				...currentSettings,
 				name: environment.name,
+				groupId: environment.groupId ?? '',
 				enabled: environment.enabled
 			}),
 			onSave: saveEnvironmentSettings,
@@ -583,68 +600,92 @@
 
 	{#snippet tabContent()}
 		<Tabs.Content value="features">
-			<SettingsSection
-				id="features"
-				title={m.features_title()}
-				description={featureDefinitions.some((feature) => !featureStore.isSupported(feature.id, environment.id))
-					? m.features_unsupported()
-					: undefined}
-			>
-				{#if featureStore.status(environment.id) === 'ready'}
+			<div class="flex flex-col gap-6">
+				<SettingsSection id="general" title={m.common_general()}>
 					<SettingsRow
-						for="vulnerability-management"
-						label={m.features_vulnerability_management()}
-						description={m.features_vulnerability_description()}
-						error={formInputs.featureVulnerabilityManagementEnabled.error}
-						layout="switch"
+						for="environment-group"
+						label={m.environment()}
+						description={m.agent_environment_description()}
+						error={formInputs.groupId.error}
 					>
 						{#snippet children({ describedBy, errorId })}
-							<Switch
-								id="vulnerability-management"
-								bind:checked={formInputs.featureVulnerabilityManagementEnabled.value}
-								disabled={featureSwitchDisabled('vulnerabilityManagement')}
-								aria-invalid={!!formInputs.featureVulnerabilityManagementEnabled.error}
+							<SelectWithLabel
+								id="environment-group"
+								label={m.environment()}
+								hideLabel
+								placeholder={m.none()}
+								options={environmentGroupOptions}
+								bind:value={formInputs.groupId.value}
+								disabled={!isGlobalAdmin()}
 								aria-describedby={describedBy}
 								aria-errormessage={errorId}
 							/>
 						{/snippet}
 					</SettingsRow>
-					{#if swarmActive}
-						<!-- An active cluster keeps Swarm on, so the stored toggle is shown locked. -->
-						<SettingsRow for="swarm" label={m.swarm()} description={m.features_swarm_locked()} layout="switch">
-							{#snippet children({ describedBy })}
-								<Switch id="swarm" checked={true} disabled aria-describedby={describedBy} />
-							{/snippet}
-						</SettingsRow>
-					{:else}
+				</SettingsSection>
+				<SettingsSection
+					id="features"
+					title={m.features_title()}
+					description={featureDefinitions.some((feature) => !featureStore.isSupported(feature.id, environment.id))
+						? m.features_unsupported()
+						: undefined}
+				>
+					{#if featureStore.status(environment.id) === 'ready'}
 						<SettingsRow
-							for="swarm"
-							label={m.swarm()}
-							description={m.features_swarm_description()}
-							error={formInputs.featureSwarmEnabled.error}
+							for="vulnerability-management"
+							label={m.features_vulnerability_management()}
+							description={m.features_vulnerability_description()}
+							error={formInputs.featureVulnerabilityManagementEnabled.error}
 							layout="switch"
 						>
 							{#snippet children({ describedBy, errorId })}
 								<Switch
-									id="swarm"
-									bind:checked={formInputs.featureSwarmEnabled.value}
-									disabled={featureSwitchDisabled('swarm')}
-									aria-invalid={!!formInputs.featureSwarmEnabled.error}
+									id="vulnerability-management"
+									bind:checked={formInputs.featureVulnerabilityManagementEnabled.value}
+									disabled={featureSwitchDisabled('vulnerabilityManagement')}
+									aria-invalid={!!formInputs.featureVulnerabilityManagementEnabled.error}
 									aria-describedby={describedBy}
 									aria-errormessage={errorId}
 								/>
 							{/snippet}
 						</SettingsRow>
+						{#if swarmActive}
+							<!-- An active cluster keeps Swarm on, so the stored toggle is shown locked. -->
+							<SettingsRow for="swarm" label={m.swarm()} description={m.features_swarm_locked()} layout="switch">
+								{#snippet children({ describedBy })}
+									<Switch id="swarm" checked={true} disabled aria-describedby={describedBy} />
+								{/snippet}
+							</SettingsRow>
+						{:else}
+							<SettingsRow
+								for="swarm"
+								label={m.swarm()}
+								description={m.features_swarm_description()}
+								error={formInputs.featureSwarmEnabled.error}
+								layout="switch"
+							>
+								{#snippet children({ describedBy, errorId })}
+									<Switch
+										id="swarm"
+										bind:checked={formInputs.featureSwarmEnabled.value}
+										disabled={featureSwitchDisabled('swarm')}
+										aria-invalid={!!formInputs.featureSwarmEnabled.error}
+										aria-describedby={describedBy}
+										aria-errormessage={errorId}
+									/>
+								{/snippet}
+							</SettingsRow>
+						{/if}
+					{:else}
+						<div class="flex flex-col items-start gap-3 px-5 py-4">
+							<p role="status" class="text-sm text-muted-foreground">
+								{m.features_unavailable()}
+							</p>
+							<ArcaneButton action="base" customLabel={m.common_retry()} onclick={refreshEnvironment} />
+						</div>
 					{/if}
-				{:else}
-					<div class="flex flex-col items-start gap-3 px-5 py-4">
-						<p role="status" class="text-sm text-muted-foreground">
-							{m.features_unavailable()}
-						</p>
-						<ArcaneButton action="base" customLabel={m.common_retry()} onclick={refreshEnvironment} />
-					</div>
-				{/if}
-			</SettingsSection>
+				</SettingsSection>
+			</div>
 		</Tabs.Content>
 
 		{#if showEngineTab}

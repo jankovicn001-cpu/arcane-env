@@ -26,6 +26,7 @@ import (
 	"getarcane.dev/arcane/v3/internal/common"
 	"getarcane.dev/arcane/v3/internal/database"
 	"getarcane.dev/arcane/v3/internal/kv"
+	"getarcane.dev/arcane/v3/internal/role/children/usergroup"
 	"getarcane.dev/arcane/v3/pkg/authz"
 	"getarcane.dev/arcane/v3/pkg/pagination"
 	"getarcane.dev/arcane/v3/pkg/sqlite"
@@ -35,6 +36,7 @@ import (
 type (
 	RoleService struct {
 		db             *database.DB
+		userGroups     *usergroup.Service
 		userCache      *cache.Cache[string, *authz.PermissionSet]
 		apiKeyCache    *cache.Cache[string, *authz.PermissionSet]
 		cacheFillMu    sync.Mutex
@@ -59,8 +61,13 @@ var PermissionsManifestETag = sync.OnceValue(func() string {
 })
 
 func NewRoleService(db *database.DB) *RoleService {
-	return &RoleService{
+	var s *RoleService
+	s = &RoleService{
 		db: db,
+		userGroups: usergroup.New(db, usergroup.Hooks{
+			InvalidateUser:     func(userID string) { s.InvalidateUser(userID) },
+			InvalidateAllUsers: func() { s.InvalidateAllUsers() },
+		}),
 		userCache: &cache.Cache[string, *authz.PermissionSet]{
 			Capacity:        2048,
 			TTL:             permissionCacheTTL,
@@ -72,6 +79,7 @@ func NewRoleService(db *database.DB) *RoleService {
 			JanitorInterval: permissionCacheTTL,
 		},
 	}
+	return s
 }
 
 func (s *RoleService) EnsureBuiltInRoles(ctx context.Context) error {
@@ -315,7 +323,11 @@ func (s *RoleService) UpdateRole(ctx context.Context, id, name string, descripti
 		if err != nil {
 			return err
 		}
-		affected = ids
+		groupMembers, err := s.userGroups.MemberIDsWithRole(tx, id)
+		if err != nil {
+			return err
+		}
+		affected = slices.Concat(ids, groupMembers)
 		existing.Name = input.Name
 		existing.Description = input.Description
 		existing.Permissions = authz.ExpandPermissions(permissions)
@@ -367,7 +379,14 @@ func (s *RoleService) DeleteRole(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		affected = ids
+		groupMembers, err := s.userGroups.MemberIDsWithRole(tx, id)
+		if err != nil {
+			return err
+		}
+		affected = slices.Concat(ids, groupMembers)
+		if deleteGrantsErr := s.userGroups.DeleteRoleGrants(tx, id); deleteGrantsErr != nil {
+			return deleteGrantsErr
+		}
 		if deleteRoleErr := tx.Delete(&Role{}, "id = ?", id).Error; deleteRoleErr != nil {
 			return fmt.Errorf("failed to delete role: %w", deleteRoleErr)
 		}
@@ -426,7 +445,7 @@ func (s *RoleService) ReplaceUserAssignments(ctx context.Context, userID, source
 func (s *RoleService) ReplaceUserAssignmentsInDB(ctx context.Context, tx *gorm.DB, userID, source string, desired []UserRoleAssignment) error {
 	seen := make(map[string]struct{}, len(desired))
 	desired = slices.DeleteFunc(desired, func(a UserRoleAssignment) bool {
-		key := a.RoleID + "\x00" + kit.FromPtr(a.EnvironmentID)
+		key := a.RoleID + "\x00" + kit.FromPtr(a.EnvironmentID) + "\x00" + kit.FromPtr(a.EnvironmentGroupID)
 		if _, dup := seen[key]; dup {
 			return true
 		}
@@ -441,17 +460,8 @@ func (s *RoleService) ReplaceUserAssignmentsInDB(ctx context.Context, tx *gorm.D
 	if err := s.LockGlobalAdminGuard(tx); err != nil {
 		return err
 	}
-	// Lock the user row so assignment swaps serialize with user-domain privilege checks.
-	var locked struct{ ID string }
-	if err := tx.Table("users").
-		Select("id").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", userID).
-		Take(&locked).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return common.ErrUserNotFound
-		}
-		return fmt.Errorf("failed to lock user for assignment update: %w", err)
+	if err := lockUser(tx, userID); err != nil {
+		return err
 	}
 	if err := validateAssignmentsExist(tx, desired); err != nil {
 		return err
@@ -469,6 +479,43 @@ func (s *RoleService) ReplaceUserAssignmentsInDB(ctx context.Context, tx *gorm.D
 	return nil
 }
 
+// ReplaceUserGroupMemberships makes the user's memberships synced from source match the groups linked to values.
+func (s *RoleService) ReplaceUserGroupMemberships(ctx context.Context, userID, source string, values []string) error {
+	if err := s.db.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.userGroups.ReplaceSyncedMemberships(ctx, tx, userID, source, values)
+	}); err != nil {
+		return err
+	}
+	s.InvalidateUser(userID)
+	return nil
+}
+
+// ReplaceUserGroupMembershipsInDB is ReplaceUserGroupMemberships inside the caller's transaction; the caller invalidates the user.
+func (s *RoleService) ReplaceUserGroupMembershipsInDB(ctx context.Context, tx *gorm.DB, userID, source string, values []string) error {
+	return s.userGroups.ReplaceSyncedMemberships(ctx, tx, userID, source, values)
+}
+
+// UserGroupRefs lists the user groups the user belongs to through any source.
+func (s *RoleService) UserGroupRefs(ctx context.Context, userID string) ([]types.UserGroupRef, error) {
+	return s.userGroups.Refs(ctx, userID)
+}
+
+// lockUser locks the user row so assignment changes serialize with user-domain privilege checks.
+func lockUser(tx *gorm.DB, userID string) error {
+	var locked struct{ ID string }
+	if err := tx.Table("users").
+		Select("id").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", userID).
+		Take(&locked).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return common.ErrUserNotFound
+		}
+		return fmt.Errorf("failed to lock user for assignment update: %w", err)
+	}
+	return nil
+}
+
 func MappedAssignments(mappings []OidcRoleMapping, groups []string) []UserRoleAssignment {
 	desired := make([]UserRoleAssignment, 0, len(mappings))
 	for _, m := range mappings {
@@ -476,8 +523,9 @@ func MappedAssignments(mappings []OidcRoleMapping, groups []string) []UserRoleAs
 			continue
 		}
 		desired = append(desired, UserRoleAssignment{
-			RoleID:        m.RoleID,
-			EnvironmentID: m.EnvironmentID,
+			RoleID:             m.RoleID,
+			EnvironmentID:      m.EnvironmentID,
+			EnvironmentGroupID: m.EnvironmentGroupID,
 		})
 	}
 	return desired
@@ -486,10 +534,17 @@ func MappedAssignments(mappings []OidcRoleMapping, groups []string) []UserRoleAs
 func validateAssignmentsExist(tx *gorm.DB, desired []UserRoleAssignment) error {
 	roleIDSet := make(map[string]struct{}, len(desired))
 	envIDSet := make(map[string]struct{}, len(desired))
+	groupIDSet := make(map[string]struct{}, len(desired))
 	for _, a := range desired {
 		roleIDSet[a.RoleID] = struct{}{}
+		if a.EnvironmentID != nil && a.EnvironmentGroupID != nil {
+			return invalidGroupScopeError(errors.New("invalid role assignment: environmentId and environmentGroupId are mutually exclusive"))
+		}
 		if a.EnvironmentID != nil {
 			envIDSet[*a.EnvironmentID] = struct{}{}
+		}
+		if a.EnvironmentGroupID != nil {
+			groupIDSet[*a.EnvironmentGroupID] = struct{}{}
 		}
 	}
 
@@ -526,7 +581,24 @@ func validateAssignmentsExist(tx *gorm.DB, desired []UserRoleAssignment) error {
 			}
 		}
 	}
+
+	if len(groupIDSet) > 0 {
+		var found []string
+		if err := tx.Table("environment_groups").Where("id IN ?", slices.Collect(maps.Keys(groupIDSet))).Pluck("id", &found).Error; err != nil {
+			return fmt.Errorf("failed to verify environment group ids: %w", err)
+		}
+		for id := range groupIDSet {
+			if !slices.Contains(found, id) {
+				return invalidGroupScopeError(fmt.Errorf("invalid role assignment: environment group %q does not exist", id))
+			}
+		}
+	}
 	return nil
+}
+
+// invalidGroupScopeError keeps ErrInvalidRoleAssignment so directory syncs skip the row, and names the field for the UI.
+func invalidGroupScopeError(err error) error {
+	return common.Classify(common.ErrInvalidRoleAssignment, &types.FieldError{Field: "environmentGroupId", Err: err})
 }
 
 func (s *RoleService) CountGlobalAdmins(ctx context.Context, tx *gorm.DB, excludedUserID string) (int, error) {
@@ -539,7 +611,7 @@ func (s *RoleService) CountGlobalAdmins(ctx context.Context, tx *gorm.DB, exclud
 	query := tx.WithContext(ctx).
 		Table("users AS u").
 		Select("u.id AS user_id, r.permissions AS permissions").
-		Joins("INNER JOIN user_role_assignments ura ON ura.user_id = u.id AND ura.environment_id IS NULL").
+		Joins("INNER JOIN user_role_assignments ura ON ura.user_id = u.id AND ura.environment_id IS NULL AND ura.environment_group_id IS NULL").
 		Joins("INNER JOIN roles r ON r.id = ura.role_id").
 		Where("u.is_service_account = ? AND u.disabled = ?", false, false)
 	if strings.TrimSpace(excludedUserID) != "" {
@@ -597,31 +669,75 @@ func (s *RoleService) ResolvePermissions(ctx context.Context, userID string) (*a
 
 func (s *RoleService) ResolveUserPermissionsInDB(_ context.Context, tx *gorm.DB, userID string) (*authz.PermissionSet, error) {
 	// Scan permissions as a raw string; GORM cannot wire StringSlice on anonymous structs.
-	type row struct {
-		EnvironmentID *string `gorm:"column:environment_id"`
-		Permissions   string  `gorm:"column:permissions"`
-	}
-	var rows []row
+	var rows []usergroup.ScopedGrant
 	if err := tx.Table("user_role_assignments AS ura").
-		Select("r.permissions AS permissions, ura.environment_id AS environment_id").
+		Select("r.permissions AS permissions, ura.environment_id AS environment_id, ura.environment_group_id AS environment_group_id").
 		Joins("INNER JOIN roles r ON r.id = ura.role_id").
 		Where("ura.user_id = ?", userID).
 		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("failed to resolve user permissions: %w", err)
 	}
+	// Group grants resolve with the same scope handling as direct ones.
+	groupRows, err := s.userGroups.ScopedGrants(tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	rows = append(rows, groupRows...)
+	groupIDs := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.EnvironmentGroupID != nil {
+			groupIDs = append(groupIDs, *r.EnvironmentGroupID)
+		}
+	}
+	members, err := environmentGroupMembers(tx, groupIDs)
+	if err != nil {
+		return nil, err
+	}
 	ps := authz.NewPermissionSet()
 	for _, r := range rows {
-		perms, err := decodePermissionsJSON(r.Permissions)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode role permissions: %w", err)
+		perms, decodeErr := decodePermissionsJSON(r.Permissions)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("failed to decode role permissions: %w", decodeErr)
 		}
-		if r.EnvironmentID == nil {
+		switch {
+		case r.EnvironmentGroupID != nil:
+			// A group grant covers only the group's current agents; an empty or deleted group grants nothing.
+			for _, envID := range members[*r.EnvironmentGroupID] {
+				ps.AddEnv(envID, perms...)
+			}
+		case r.EnvironmentID != nil:
+			// AddEnv widens an empty ID to global, so a malformed scope grants nothing instead.
+			if *r.EnvironmentID != "" {
+				ps.AddEnv(*r.EnvironmentID, perms...)
+			}
+		default:
 			ps.AddGlobal(perms...)
-		} else {
-			ps.AddEnv(*r.EnvironmentID, perms...)
 		}
 	}
 	return ps, nil
+}
+
+// environmentGroupMembers maps each group ID to its agent IDs, skipping the query when no group grant exists.
+func environmentGroupMembers(tx *gorm.DB, groupIDs []string) (map[string][]string, error) {
+	if len(groupIDs) == 0 {
+		return nil, nil
+	}
+	var rows []struct {
+		ID      string `gorm:"column:id"`
+		GroupID string `gorm:"column:group_id"`
+	}
+	// An empty agent ID would widen to a global grant in AddEnv, so exclude it.
+	if err := tx.Table("environments").
+		Select("id, group_id").
+		Where("group_id IN ? AND id <> ''", kit.Unique(groupIDs)).
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("failed to resolve environment group members: %w", err)
+	}
+	members := make(map[string][]string, len(groupIDs))
+	for _, r := range rows {
+		members[r.GroupID] = append(members[r.GroupID], r.ID)
+	}
+	return members, nil
 }
 
 func decodePermissionsJSON(raw string) ([]string, error) {
@@ -786,9 +902,9 @@ func (s *RoleService) GetOidcMapping(ctx context.Context, id string) (*OidcRoleM
 	return sqlite.FirstWhere[OidcRoleMapping](ctx, s.db.DB, common.Classify(common.ErrOidcMappingNotFound, errors.New("OIDC role mapping not found")), "id = ?", id)
 }
 
-func (s *RoleService) CreateOidcMapping(ctx context.Context, claimValue, roleID string, environmentID *string) (*OidcRoleMapping, error) {
-	claimValue = strings.TrimSpace(claimValue)
-	roleID = strings.TrimSpace(roleID)
+func (s *RoleService) CreateOidcMapping(ctx context.Context, spec types.OidcRoleMappingSpec) (*OidcRoleMapping, error) {
+	claimValue := strings.TrimSpace(spec.ClaimValue)
+	roleID := strings.TrimSpace(spec.RoleID)
 	if claimValue == "" {
 		return nil, common.Classify(common.ErrValidation, errors.New("claim value is required"))
 	}
@@ -797,14 +913,15 @@ func (s *RoleService) CreateOidcMapping(ctx context.Context, claimValue, roleID 
 	}
 	var mapping OidcRoleMapping
 	err := s.db.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := validateAssignmentsExist(tx, []UserRoleAssignment{{RoleID: roleID, EnvironmentID: environmentID}}); err != nil {
+		if err := validateAssignmentsExist(tx, []UserRoleAssignment{{RoleID: roleID, EnvironmentID: spec.EnvironmentID, EnvironmentGroupID: spec.EnvironmentGroupID}}); err != nil {
 			return err
 		}
 		mapping = OidcRoleMapping{
-			ClaimValue:    claimValue,
-			RoleID:        roleID,
-			EnvironmentID: environmentID,
-			Source:        OidcMappingSourceManual,
+			ClaimValue:         claimValue,
+			RoleID:             roleID,
+			EnvironmentID:      spec.EnvironmentID,
+			EnvironmentGroupID: spec.EnvironmentGroupID,
+			Source:             OidcMappingSourceManual,
 		}
 		if err := tx.Create(&mapping).Error; err != nil {
 			return fmt.Errorf("failed to create oidc mapping: %w", err)
@@ -817,9 +934,9 @@ func (s *RoleService) CreateOidcMapping(ctx context.Context, claimValue, roleID 
 	return &mapping, nil
 }
 
-func (s *RoleService) UpdateOidcMapping(ctx context.Context, id, claimValue, roleID string, environmentID *string) (*OidcRoleMapping, error) {
-	claimValue = strings.TrimSpace(claimValue)
-	roleID = strings.TrimSpace(roleID)
+func (s *RoleService) UpdateOidcMapping(ctx context.Context, id string, spec types.OidcRoleMappingSpec) (*OidcRoleMapping, error) {
+	claimValue := strings.TrimSpace(spec.ClaimValue)
+	roleID := strings.TrimSpace(spec.RoleID)
 	if claimValue == "" {
 		return nil, common.Classify(common.ErrValidation, errors.New("claim value is required"))
 	}
@@ -838,12 +955,13 @@ func (s *RoleService) UpdateOidcMapping(ctx context.Context, id, claimValue, rol
 		if existing.Source == OidcMappingSourceEnv {
 			return common.Classify(common.ErrOidcMappingEnvManaged, errors.New("OIDC role mapping is managed by ARCANE_OIDC_ROLE_MAPPINGS and cannot be edited at runtime"))
 		}
-		if err := validateAssignmentsExist(tx, []UserRoleAssignment{{RoleID: roleID, EnvironmentID: environmentID}}); err != nil {
+		if err := validateAssignmentsExist(tx, []UserRoleAssignment{{RoleID: roleID, EnvironmentID: spec.EnvironmentID, EnvironmentGroupID: spec.EnvironmentGroupID}}); err != nil {
 			return err
 		}
 		existing.ClaimValue = claimValue
 		existing.RoleID = roleID
-		existing.EnvironmentID = environmentID
+		existing.EnvironmentID = spec.EnvironmentID
+		existing.EnvironmentGroupID = spec.EnvironmentGroupID
 		if err := tx.Save(&existing).Error; err != nil {
 			return fmt.Errorf("failed to update mapping: %w", err)
 		}
@@ -892,6 +1010,10 @@ func (s *RoleService) ReconcileEnvOidcMappings(ctx context.Context, rawSpec stri
 		if strings.TrimSpace(sp.RoleID) == "" {
 			return fmt.Errorf("ARCANE_OIDC_ROLE_MAPPINGS[%d]: roleId is required", i)
 		}
+		// Groups are created at runtime, so env-managed mappings cannot reference one.
+		if sp.EnvironmentGroupID != nil {
+			return fmt.Errorf("ARCANE_OIDC_ROLE_MAPPINGS[%d]: environmentGroupId is not supported; manage environment-scoped mappings in the UI", i)
+		}
 	}
 
 	return s.db.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -939,6 +1061,16 @@ func (s *RoleService) InvalidateUser(userID string) {
 	defer s.cacheFillMu.Unlock()
 	s.userCacheGen.Add(1)
 	s.userCache.Delete(userID)
+	s.apiKeyCacheGen.Add(1)
+	s.apiKeyCache.Purge()
+}
+
+// InvalidateAllUsers drops every cached permission set; use it when group membership changes who an existing grant reaches.
+func (s *RoleService) InvalidateAllUsers() {
+	s.cacheFillMu.Lock()
+	defer s.cacheFillMu.Unlock()
+	s.userCacheGen.Add(1)
+	s.userCache.Purge()
 	s.apiKeyCacheGen.Add(1)
 	s.apiKeyCache.Purge()
 }

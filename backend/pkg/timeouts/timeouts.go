@@ -21,13 +21,10 @@ const (
 	DefaultBuildTimeout    = 30 * time.Minute
 	DefaultDeployWait      = 10 * time.Minute
 	DefaultJobRun          = 30 * time.Minute
-	DefaultImageUpdateScan = 15 * time.Minute
 	// DefaultActivitySlotWait bounds how long a queued activity waits for a
 	// per-environment concurrency slot before failing loudly instead of
 	// parking forever behind hung work.
-	DefaultActivitySlotWait    = 2 * time.Minute
-	DefaultAutoUpdateOperation = 15 * time.Minute
-	DefaultAutoUpdateApply     = 30 * time.Minute
+	DefaultActivitySlotWait = 2 * time.Minute
 )
 
 func GetDuration(settingSeconds int, defaultDuration time.Duration) time.Duration {

@@ -1,6 +1,7 @@
 import type { Locale } from '#lib/paraglide/runtime.js';
 
 import type { DashboardWidgetType } from './ui/user';
+import type { UserGroupRef } from './usergroup';
 
 export type TimeFormat = 'auto' | '12h' | '24h';
 
@@ -104,6 +105,7 @@ export type UserPreferences = {
 	toastPosition?: ToastPosition;
 	environmentColors?: Record<string, string>;
 	environmentLabelStyle?: EnvironmentLabelStyle;
+	environmentFirstNavigation?: boolean;
 	dashboardLayout?: DashboardWidgetLayout[];
 	interfaceFont?: string;
 	monospaceFont?: string;
@@ -115,6 +117,7 @@ export type RoleAssignmentSource = 'manual' | 'oidc' | 'ldap';
 export type RoleAssignmentSummary = {
 	roleId: string;
 	environmentId?: string;
+	environmentGroupId?: string;
 	source: RoleAssignmentSource;
 };
 
@@ -127,6 +130,7 @@ export type User = {
 	avatarUrl?: string;
 	backdropUrl?: string;
 	roleAssignments: RoleAssignmentSummary[];
+	userGroups?: UserGroupRef[];
 	permissionsByEnv: Record<string, string[]>;
 	isGlobalAdmin: boolean;
 	canDelete: boolean;

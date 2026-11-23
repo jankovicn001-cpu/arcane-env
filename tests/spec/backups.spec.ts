@@ -338,7 +338,7 @@ test.describe('Workspace restore', () => {
 			}
 		);
 		await page.route(
-			new RegExp(`/api/agents/0/projects/${encodedProject}(?:/(compose|runtime|updates))?$`),
+			new RegExp(`/api/agents/0/projects/${encodedProject}(?:/(compose|runtime))?$`),
 			async (route) => {
 				const section = new URL(route.request().url()).pathname.split('/').at(-1);
 				const project = {

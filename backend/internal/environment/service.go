@@ -38,11 +38,13 @@ import (
 	"getarcane.dev/arcane/v3/internal/database"
 	"getarcane.dev/arcane/v3/internal/docker"
 	"getarcane.dev/arcane/v3/internal/environment/children/enrollment"
+	"getarcane.dev/arcane/v3/internal/environment/children/group"
 	"getarcane.dev/arcane/v3/internal/environment/children/health"
 	"getarcane.dev/arcane/v3/internal/environment/children/proxy"
 	"getarcane.dev/arcane/v3/internal/environment/children/snippets"
 	"getarcane.dev/arcane/v3/internal/environment/children/swarm"
 	"getarcane.dev/arcane/v3/internal/event"
+	"getarcane.dev/arcane/v3/internal/middleware"
 	"getarcane.dev/arcane/v3/internal/registry"
 	"getarcane.dev/arcane/v3/internal/scheduler/entityjobs"
 	"getarcane.dev/arcane/v3/internal/scheduler/jobcontext"
@@ -77,13 +79,16 @@ type (
 		jobs             *entityjobs.Registry
 		config           *config.Config
 
-		invalidateUser  UserInvalidator
-		health          *health.Service
-		snippets        *snippets.Service
-		swarm           *swarm.Service
-		enrollment      *enrollment.Service
-		runtimeWatchers runtimeWatchers
-		environmentGens [environmentCacheStripes]atomic.Uint64
+		invalidateUser UserInvalidator
+		// invalidatePermissions drops cached permissions when an agent's group membership changes.
+		invalidatePermissions PermissionsInvalidator
+		health                *health.Service
+		snippets              *snippets.Service
+		swarm                 *swarm.Service
+		enrollment            *enrollment.Service
+		groups                *group.Service
+		runtimeWatchers       runtimeWatchers
+		environmentGens       [environmentCacheStripes]atomic.Uint64
 	}
 
 	VariableSyncer interface {
@@ -113,6 +118,9 @@ type (
 	}
 
 	UserInvalidator func(userID string)
+
+	// PermissionsInvalidator drops every cached permission set, since group grants follow agent membership.
+	PermissionsInvalidator func()
 
 	resourceSync struct {
 		sync func(ctx context.Context, environmentID string) error
@@ -170,11 +178,13 @@ type (
 		RemoteTransport RemoteTransport
 		VariableSyncer  VariableSyncer
 		InvalidateUser  UserInvalidator
-		Config          *config.Config
-		Ctx             context.Context
-		Scheduler       types.DynamicScheduler
-		Admission       *runs.Admission
-		Tunnels         *agent.TunnelRegistry
+		// InvalidatePermissions runs after agent group membership changes.
+		InvalidatePermissions PermissionsInvalidator
+		Config                *config.Config
+		Ctx                   context.Context
+		Scheduler             types.DynamicScheduler
+		Admission             *runs.Admission
+		Tunnels               *agent.TunnelRegistry
 	}
 )
 
@@ -234,16 +244,18 @@ func (t remoteTransport) ProxyJSONRequestForEnvironment(ctx context.Context, env
 }
 
 func NewEnvironmentService(p EnvironmentServiceParams) *EnvironmentService {
-	return &EnvironmentService{
-		Lister:          p.Lister,
-		RemoteTransport: p.RemoteTransport,
-		variableSyncer:  p.VariableSyncer,
-		invalidateUser:  p.InvalidateUser,
-		db:              p.DB,
-		dockerService:   p.DockerService,
-		tunnels:         p.Tunnels,
-		eventService:    p.EventService,
-		settingsService: p.SettingsService,
+	var s *EnvironmentService
+	s = &EnvironmentService{
+		Lister:                p.Lister,
+		RemoteTransport:       p.RemoteTransport,
+		variableSyncer:        p.VariableSyncer,
+		invalidateUser:        p.InvalidateUser,
+		invalidatePermissions: p.InvalidatePermissions,
+		db:                    p.DB,
+		dockerService:         p.DockerService,
+		tunnels:               p.Tunnels,
+		eventService:          p.EventService,
+		settingsService:       p.SettingsService,
 		agentTokens: &agentTokenCache{
 			byToken: &cache.Cache[string, string]{
 				Capacity:        1024,
@@ -286,7 +298,14 @@ func NewEnvironmentService(p EnvironmentServiceParams) *EnvironmentService {
 		snippets:   snippets.New(p.EventService),
 		swarm:      swarm.New(p.APIKeyService),
 		enrollment: enrollment.New(p.DB),
+		groups: group.New(p.DB, group.Hooks{
+			// Group renames and deletions reload the live environment stream.
+			OnChange: func() { s.NotifyRuntimeStateChanged() },
+			// Deleting a group removes its grants and unassigns its agents.
+			OnAccessChange: p.InvalidatePermissions,
+		}),
 	}
+	return s
 }
 
 func (s *EnvironmentService) ResolveAgentEnvironmentByToken(ctx context.Context, token string) (string, error) {
@@ -426,6 +445,15 @@ func (s *EnvironmentService) CreateEnvironment(ctx context.Context, env *Environ
 	if err := normalization.Normalize(env); err != nil {
 		return nil, err
 	}
+	if env.GroupID != nil {
+		if err := authorizeGroupChange(ctx); err != nil {
+			return nil, err
+		}
+	}
+	assignedGroup, groupErr := s.findAssignableGroup(ctx, env.GroupID)
+	if groupErr != nil {
+		return nil, groupErr
+	}
 	id := uuid.New().String()
 	now := time.Now()
 	apiURL := cmp.Or(env.ApiUrl, "agent://"+cmp.Or(strings.Trim(agentSlugPattern.ReplaceAllString(strings.ToLower(env.Name), "-"), "-"), id))
@@ -439,8 +467,10 @@ func (s *EnvironmentService) CreateEnvironment(ctx context.Context, env *Environ
 			CreatedAt: now,
 			UpdatedAt: new(now),
 		},
-		Name:   env.Name,
-		ApiUrl: kit.Ternary(apiURLTaken > 0, apiURL+"-"+id, apiURL),
+		Name:    env.Name,
+		GroupID: env.GroupID,
+		Group:   assignedGroup,
+		ApiUrl:  kit.Ternary(apiURLTaken > 0, apiURL+"-"+id, apiURL),
 		// Only set status to offline if not already set (e.g., API key flow sets it to pending)
 		Status:                cmp.Or(env.Status, string(EnvironmentStatusOffline)),
 		Enabled:               env.Enabled,
@@ -454,7 +484,7 @@ func (s *EnvironmentService) CreateEnvironment(ctx context.Context, env *Environ
 		EnrollmentRequestHash: env.EnrollmentRequestHash,
 	}
 
-	if err := s.db.WithContext(ctx).Create(env).Error; err != nil {
+	if err := s.db.WithContext(ctx).Omit("Group").Create(env).Error; err != nil {
 		return nil, fmt.Errorf("failed to create environment: %w", err)
 	}
 
@@ -468,13 +498,16 @@ func (s *EnvironmentService) CreateEnvironment(ctx context.Context, env *Environ
 	s.remoteEnvs.put(*env)
 	s.invalidateEnvironmentCache(env.ID)
 	s.NotifyRuntimeStateChanged()
+	if env.GroupID != nil {
+		s.invalidatePermissions()
+	}
 
 	return env, nil
 }
 
 func (s *EnvironmentService) GetEnvironmentByID(ctx context.Context, id string) (*Environment, error) {
 	var envRecord Environment
-	if err := s.db.WithContext(ctx).Where("id = ?", id).First(&envRecord).Error; err != nil {
+	if err := s.db.WithContext(ctx).Preload("Group").Where("id = ?", id).First(&envRecord).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrEnvironmentNotFound
 		}
@@ -487,8 +520,22 @@ func (s *EnvironmentService) UpdateEnvironment(ctx context.Context, id string, u
 	if name, ok := updates["name"].(string); ok {
 		updates["name"] = normalization.Text(name, normalization.TextOptions{Trim: true, NFC: true})
 	}
-	if _, err := s.GetEnvironmentByID(ctx, id); err != nil {
+	current, err := s.GetEnvironmentByID(ctx, id)
+	if err != nil {
 		return nil, err
+	}
+	if groupID, ok := updates["group_id"].(string); ok {
+		// An empty group ID unassigns the agent.
+		assigned := kit.Ternary(groupID != "", &groupID, nil)
+		if kit.FromPtr(current.GroupID) != groupID {
+			if authErr := authorizeGroupChange(ctx); authErr != nil {
+				return nil, authErr
+			}
+		}
+		if _, findErr := s.findAssignableGroup(ctx, assigned); findErr != nil {
+			return nil, findErr
+		}
+		updates["group_id"] = assigned
 	}
 
 	updates["updated_at"] = new(time.Now())
@@ -504,6 +551,9 @@ func (s *EnvironmentService) UpdateEnvironment(ctx context.Context, id string, u
 		return nil, err
 	}
 	s.remoteEnvs.put(*updated)
+	if kit.FromPtr(current.GroupID) != kit.FromPtr(updated.GroupID) {
+		s.invalidatePermissions()
+	}
 
 	if _, ok := updates["access_token"]; ok {
 		s.agentTokens.sync(id, "")
@@ -601,6 +651,9 @@ func (s *EnvironmentService) DeleteEnvironment(ctx context.Context, id string, u
 	for _, federatedUserID := range federatedUserIDs {
 		s.invalidateUser(federatedUserID)
 	}
+	if env.GroupID != nil {
+		s.invalidatePermissions()
+	}
 
 	s.agentTokens.sync(id, "")
 	s.accessTokenIndex.sync(id, "")
@@ -684,6 +737,8 @@ func (s *EnvironmentService) linkEnvironmentApiKey(ctx context.Context, envID, n
 				UpdatedAt: new(time.Now()),
 			},
 			Name:                  envRecord.Name,
+			GroupID:               envRecord.GroupID,
+			Group:                 envRecord.Group,
 			ApiUrl:                envRecord.ApiUrl,
 			Status:                string(EnvironmentStatusPending),
 			Enabled:               envRecord.Enabled,
@@ -921,6 +976,7 @@ func (s *EnvironmentService) ListVisibleEnvironments(ctx context.Context) ([]typ
 	var envs []Environment
 	if err := s.db.WithContext(ctx).
 		Model(&Environment{}).
+		Preload("Group").
 		Where("hidden = ?", false).
 		Order("created_at asc, id asc").
 		Find(&envs).Error; err != nil {
@@ -1663,6 +1719,27 @@ func (s *EnvironmentService) SetEnrollmentRequestHash(ctx context.Context, envID
 	}
 	s.invalidateEnvironmentCache(envID)
 	return nil
+}
+
+// findAssignableGroup validates an agent's group assignment; a nil ID means unassigned.
+// Group-scoped role grants follow an agent's group, so moving agents between groups
+// changes who can reach them; only global admins may do it.
+func authorizeGroupChange(ctx context.Context) error {
+	if ps, ok := middleware.PermissionsFromContext(ctx); ok && ps.IsGlobalAdmin() {
+		return nil
+	}
+	return common.ErrAgentGroupChangeForbidden
+}
+
+func (s *EnvironmentService) findAssignableGroup(ctx context.Context, groupID *string) (*group.Group, error) {
+	if groupID == nil {
+		return nil, nil
+	}
+	assigned, err := s.groups.Find(ctx, *groupID)
+	if errors.Is(err, group.ErrGroupNotFound) {
+		return nil, common.Classify(common.ErrValidation, &types.FieldError{Field: "groupId", Err: err})
+	}
+	return assigned, err
 }
 
 func (s *EnvironmentService) ListEnrollmentTokens(ctx context.Context) ([]types.EnrollmentToken, error) {

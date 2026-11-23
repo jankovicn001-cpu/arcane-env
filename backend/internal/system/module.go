@@ -7,11 +7,9 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"getarcane.dev/arcane/v3/internal/activity"
-	"getarcane.dev/arcane/v3/internal/config"
 	"getarcane.dev/arcane/v3/internal/middleware"
 	"getarcane.dev/arcane/v3/internal/system/children/backup"
 	"getarcane.dev/arcane/v3/internal/system/children/prune"
-	"getarcane.dev/arcane/v3/internal/system/children/upgrade"
 	"getarcane.dev/arcane/v3/pkg/authz"
 	"getarcane.dev/arcane/v3/pkg/handlerutil"
 )
@@ -20,16 +18,14 @@ type (
 	Module struct {
 		service         *SystemService
 		activityService *activity.ActivityService
-		cfg             *config.Config
 	}
 )
 
 func New(
 	service *SystemService,
 	activityService *activity.ActivityService,
-	cfg *config.Config,
 ) *Module {
-	return &Module{service: service, activityService: activityService, cfg: cfg}
+	return &Module{service: service, activityService: activityService}
 }
 
 func (m *Module) Service() *SystemService {
@@ -47,7 +43,6 @@ func (m *Module) RegisterRoutes(api huma.API, appCtx handlerutil.ActivityAppCont
 
 	RegisterSystem(api, NewHandler(m.service, appCtx.Context()))
 	prune.RegisterRoutes(api, prune.NewHandler(service.prune, appCtx.Context()))
-	upgrade.RegisterRoutes(api, upgrade.NewHandler(service.upgrade, m.cfg, appCtx.Context()))
 	backup.RegisterRoutes(api, backup.NewHandler(service.backup, m.activityService, appCtx.Context()))
 }
 

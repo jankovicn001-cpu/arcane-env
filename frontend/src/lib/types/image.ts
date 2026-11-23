@@ -5,26 +5,6 @@ export interface ImageListResponse extends Paginated<ImageSummary> {
 	maxImageUploadSize?: number;
 }
 
-export interface ImageUpdateInfo {
-	checkTime: string;
-	updateType: string;
-	currentVersion: string;
-	latestVersion: string;
-	currentDigest: string;
-	latestDigest: string;
-	currentCreated?: string;
-	latestCreated?: string;
-	error: string;
-	authMethod?: 'none' | 'anonymous' | 'credential' | 'unknown';
-	authUsername?: string;
-	authRegistry?: string;
-	responseTimeMs: number;
-	hasUpdate: boolean;
-	blocked?: boolean;
-	blockedReason?: string;
-	usedCredential?: boolean;
-}
-
 export interface ImageUsedBy {
 	type: 'project' | 'container';
 	name: string;
@@ -44,7 +24,6 @@ export interface ImageSummary {
 	usedBy?: ImageUsedBy[];
 	repo: string;
 	tag: string;
-	updateInfo?: ImageUpdateInfo;
 	vulnerabilityScan?: VulnerabilityScanSummary;
 	hardened?: HardenedImageInfo;
 }
@@ -79,17 +58,6 @@ export interface ImageAttestationList {
 	platform?: string;
 	source?: 'daemon' | 'registry';
 	attestations: ImageAttestation[];
-}
-
-export interface ImageReleaseNotes {
-	imageRef: string;
-	version?: string;
-	status: 'found' | 'not_found' | 'unavailable' | 'link' | 'no_source';
-	sourceUrl?: string;
-	releaseUrl?: string;
-	releaseName?: string;
-	notes?: string;
-	publishedAt?: string;
 }
 
 export interface ImageAttestation {
@@ -155,7 +123,6 @@ export interface ImageDetailSummary {
 	repoDigests: string[];
 	pinnedReferences?: string[];
 	hardened?: HardenedImageInfo;
-	updateInfo?: ImageUpdateInfo;
 	comment: string;
 	created: string;
 	author: string;

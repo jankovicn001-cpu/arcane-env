@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/libtnb/sqlite"
 	"github.com/moby/moby/api/pkg/authconfig"
@@ -31,13 +30,11 @@ import (
 	"getarcane.dev/arcane/v3/internal/database"
 	"getarcane.dev/arcane/v3/internal/docker"
 	"getarcane.dev/arcane/v3/internal/event"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/kv"
 	"getarcane.dev/arcane/v3/internal/registry"
 	"getarcane.dev/arcane/v3/internal/scheduler/flow/flowtest"
 	"getarcane.dev/arcane/v3/internal/settings"
 	"getarcane.dev/arcane/v3/pkg/httpx"
-	"getarcane.dev/arcane/v3/pkg/imageref"
 	"getarcane.dev/arcane/v3/pkg/pagination"
 	"getarcane.dev/types/v3"
 )
@@ -64,7 +61,6 @@ func setupImageProjectTestDB(t *testing.T) *database.DB {
 	require.NoError(t, db.AutoMigrate(
 		&testProjectRow{},
 		&settings.SettingVariable{},
-		&imageupdate.ImageUpdateRecord{},
 		&event.Event{},
 		&kv.KVEntry{},
 	))
@@ -170,7 +166,7 @@ func TestMapDockerImagesToDTOs_PopulatesPinnedReferences(t *testing.T) {
 	}
 
 	usageMap := BuildVolumeUsageMap(containers, nil)
-	items := MapDockerImagesToDTOs(dockerImages, containers, usageMap, nil, nil)
+	items := MapDockerImagesToDTOs(dockerImages, containers, usageMap, nil)
 
 	require.Len(t, items, 2)
 
@@ -239,65 +235,6 @@ func TestImageService_GetImageDetail_EnrichesPinnedReferences(t *testing.T) {
 	assert.Equal(t, []string{pinnedRef}, detail.PinnedReferences)
 }
 
-func TestImageService_GetImageDetail_IncludesUpdateInfo(t *testing.T) {
-	db := setupImageProjectTestDB(t)
-	const testID = "sha256:test-detail-update"
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/images/json"):
-			_ = json.MarshalWrite(w, []image.Summary{
-				{ID: testID, Size: 1024},
-			})
-		case strings.Contains(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json"):
-			_ = json.MarshalWrite(w, image.InspectResponse{
-				ID:       testID,
-				RepoTags: []string{"nginx:latest"},
-				Size:     1024,
-			})
-		case strings.HasSuffix(r.URL.Path, "/containers/json"):
-			_ = json.MarshalWrite(w, []container.Summary{})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	require.NoError(t, db.Create(&[]imageupdate.ImageUpdateRecord{
-		{
-			ID:             testID,
-			Repository:     "docker.io/library/nginx",
-			Tag:            "latest",
-			UpdateType:     "digest",
-			CurrentVersion: "latest",
-			CheckTime:      time.Now().UTC(),
-		},
-		{
-			ID:             "container:c-detail-update",
-			ContainerID:    "c-detail-update",
-			ImageID:        testID,
-			Repository:     "docker.io/library/nginx",
-			Tag:            "latest",
-			HasUpdate:      true,
-			UpdateType:     "tag",
-			CurrentVersion: "latest",
-			CheckTime:      time.Now().UTC(),
-		},
-	}).Error)
-
-	imageSvc := NewImageService(ImageServiceParams{
-		DB:            db,
-		DockerService: newImageTestDockerService(t, server),
-		EventService:  event.NewEventService(db, &config.Config{}, nil),
-	})
-
-	detail, err := imageSvc.GetImageDetail(t.Context(), testID)
-	require.NoError(t, err)
-	require.NotNil(t, detail.UpdateInfo)
-	assert.True(t, detail.UpdateInfo.HasUpdate)
-}
-
 func TestImageService_GetImageDetail_ContainerFailureDoesNotBreakInspection(t *testing.T) {
 	db := setupImageProjectTestDB(t)
 	const testID = "sha256:test-detail-resilient"
@@ -356,56 +293,6 @@ func TestImagePaginationConfig_SearchesPinnedReferences(t *testing.T) {
 		Limit:  10,
 	})
 	require.Len(t, resTag.Items, 1)
-}
-
-func TestImageService_GetUpdateInfoByImageRefs_MatchesCanonicalAndFamiliarRepos(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&imageupdate.ImageUpdateRecord{}))
-
-	svc := NewImageService(ImageServiceParams{
-		DB: &database.DB{DB: db},
-	})
-	now := time.Now().UTC()
-
-	records := []imageupdate.ImageUpdateRecord{
-		{
-			ID:             "sha256:nginx-latest",
-			Repository:     "docker.io/library/nginx",
-			Tag:            "latest",
-			HasUpdate:      true,
-			UpdateType:     "digest",
-			CurrentVersion: "latest",
-			CheckTime:      now,
-		},
-		{
-			ID:             "sha256:redis-seven",
-			Repository:     "library/redis",
-			Tag:            "7",
-			HasUpdate:      false,
-			UpdateType:     "digest",
-			CurrentVersion: "7",
-			CheckTime:      now.Add(-time.Minute),
-		},
-	}
-
-	for i := range records {
-		require.NoError(t, db.Create(&records[i]).Error)
-	}
-
-	updates, err := svc.GetUpdateInfoByImageRefs(t.Context(), []string{
-		"nginx:latest",
-		"docker.io/library/nginx:latest",
-		"redis:7",
-	})
-	require.NoError(t, err)
-
-	require.Contains(t, updates, "nginx:latest")
-	require.Contains(t, updates, "docker.io/library/nginx:latest")
-	require.Contains(t, updates, "redis:7")
-	assert.True(t, updates["nginx:latest"].HasUpdate)
-	assert.True(t, updates["docker.io/library/nginx:latest"].HasUpdate)
-	assert.False(t, updates["redis:7"].HasUpdate)
 }
 
 func setupImageServiceAuthTest(t *testing.T) (*ImageService, *database.DB) {
@@ -705,243 +592,6 @@ func newTestDockerClient(t *testing.T, server *httptest.Server) *client.Client {
 }
 
 func (testProjectRow) TableName() string { return "projects" }
-
-func TestImageServiceContainerTagUpdatesStayScoped(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&imageupdate.ImageUpdateRecord{}))
-	svc := NewImageService(ImageServiceParams{
-		DB: &database.DB{DB: db},
-	})
-	now := time.Now().UTC()
-	firstLabels := map[string]string{
-		"com.getarcaneapp.arcane.updater.strategy":   "tag",
-		"com.getarcaneapp.arcane.updater.constraint": "3.x",
-	}
-	secondLabels := map[string]string{
-		"com.getarcaneapp.arcane.updater.strategy":   "tag",
-		"com.getarcaneapp.arcane.updater.constraint": "4.x",
-	}
-	firstTarget, secondTarget := "3.2.0", "4.0.0"
-	records := []imageupdate.ImageUpdateRecord{
-		{
-			ID:             "shared-image",
-			Repository:     "docker.io/library/example",
-			Tag:            "3.1.0",
-			CurrentVersion: "3.1.0",
-			UpdateType:     "digest",
-			CheckTime:      now,
-		},
-		{
-			ID: "container::first",
-			PolicyKey: imageref.UpdatePolicyKey(
-				"example:3.1.0",
-				firstLabels,
-			),
-			ContainerID:    "first",
-			ImageID:        "shared-image",
-			Repository:     "docker.io/library/example",
-			Tag:            "3.1.0",
-			CurrentVersion: "3.1.0",
-			LatestVersion:  &firstTarget,
-			HasUpdate:      true,
-			UpdateType:     "tag",
-			CheckTime:      now.Add(time.Second),
-		},
-		{
-			ID: "container::second",
-			PolicyKey: imageref.UpdatePolicyKey(
-				"example:3.1.0",
-				secondLabels,
-			),
-			ContainerID:    "second",
-			ImageID:        "shared-image",
-			Repository:     "docker.io/library/example",
-			Tag:            "3.1.0",
-			CurrentVersion: "3.1.0",
-			LatestVersion:  &secondTarget,
-			HasUpdate:      true,
-			UpdateType:     "tag",
-			CheckTime:      now.Add(2 * time.Second),
-		},
-	}
-	require.NoError(t, db.Create(&records).Error)
-	scoped, err := svc.GetUpdateInfoByContainers(
-		t.Context(),
-		[]container.Summary{
-			{
-				ID:     "first",
-				Image:  "example:3.1.0",
-				Labels: firstLabels,
-			},
-			{
-				ID:     "second",
-				Image:  "example:3.1.0",
-				Labels: secondLabels,
-			},
-			{ID: "unseen"},
-		},
-	)
-	require.NoError(t, err)
-	require.Len(t, scoped, 2)
-	require.Equal(t, firstTarget, scoped["first"].LatestVersion)
-	require.Equal(t, secondTarget, scoped["second"].LatestVersion)
-	byImage, err := svc.GetUpdateInfoByImageIDs(t.Context(), []string{"shared-image"})
-	require.NoError(t, err)
-	require.False(t, byImage["shared-image"].HasUpdate)
-	require.Equal(t, "digest", byImage["shared-image"].UpdateType)
-	byRef, err := svc.GetUpdateInfoByImageRefs(t.Context(), []string{"example:3.1.0"})
-	require.NoError(t, err)
-	require.False(t, byRef["example:3.1.0"].HasUpdate)
-	require.Empty(t, byRef["example:3.1.0"].LatestVersion)
-	for _, ordered := range [][]imageupdate.ImageUpdateRecord{records, {records[2], records[1], records[0]}} {
-		aggregate := buildUpdateMap(ordered)["shared-image"]
-		require.True(t, aggregate.HasUpdate)
-		require.Empty(t, aggregate.CurrentVersion)
-		require.Nil(t, aggregate.LatestVersion)
-		require.Nil(t, aggregate.LatestDigest)
-		require.Empty(t, aggregate.UpdateType)
-		require.Equal(t, records[2].CheckTime, aggregate.CheckTime)
-	}
-	for _, tt := range []struct {
-		name        string
-		imageLevel  imageupdate.ImageUpdateRecord
-		wantBlocked bool
-	}{
-		{
-			name:        "blocked when every pending update is blocked",
-			imageLevel:  records[0],
-			wantBlocked: true,
-		},
-		{
-			name: "unblocked when the image-level update is pending",
-			imageLevel: imageupdate.ImageUpdateRecord{
-				ID:         "shared-image",
-				HasUpdate:  true,
-				UpdateType: "digest",
-				CheckTime:  now,
-			},
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			aggregate := buildUpdateMap([]imageupdate.ImageUpdateRecord{
-				tt.imageLevel,
-				{
-					ID:            "container::first",
-					ContainerID:   "first",
-					ImageID:       "shared-image",
-					HasUpdate:     true,
-					UpdateType:    "tag",
-					BlockedReason: new("1 critical (limit 0)"),
-					CheckTime:     now,
-				},
-			})["shared-image"]
-			require.Equal(t, tt.wantBlocked, aggregate.BlockedReason != nil)
-		})
-	}
-	for _, currentLabels := range []map[string]string{
-		{},
-		{"com.getarcaneapp.arcane.updater.strategy": "digest"},
-		{
-			"com.getarcaneapp.arcane.updater.strategy":   "tag",
-			"com.getarcaneapp.arcane.updater.constraint": "3.1.x",
-		},
-		{
-			"com.getarcaneapp.arcane.updater.strategy":    "tag",
-			"com.getarcaneapp.arcane.updater.constraint":  "3.x",
-			"com.getarcaneapp.arcane.updater.tag-pattern": ".*",
-		},
-		{
-			"com.getarcaneapp.arcane.updater.strategy":   "tag",
-			"com.getarcaneapp.arcane.updater.constraint": "3.x",
-			imageref.UpdateCheckLabel:                    "false",
-		},
-	} {
-		checks, getUpdateInfoByContainersErr := svc.GetUpdateInfoByContainers(
-			t.Context(),
-			[]container.Summary{
-				{
-					ID:     "first",
-					Image:  "example:3.1.0",
-					Labels: currentLabels,
-				},
-				{
-					ID:     "second",
-					Image:  "example:3.1.0",
-					Labels: secondLabels,
-				},
-			},
-		)
-		require.NoError(t, getUpdateInfoByContainersErr)
-		require.NotContains(t, checks, "first")
-		require.Contains(t, checks, "second")
-	}
-	// Disabling automatic installation does not change the monitoring policy,
-	// so the stored check stays visible (#3532).
-	installExcluded := map[string]string{
-		"com.getarcaneapp.arcane.updater.strategy":   "tag",
-		"com.getarcaneapp.arcane.updater.constraint": "3.x",
-		"com.getarcaneapp.arcane.updater":            "false",
-	}
-	checks, err := svc.GetUpdateInfoByContainers(t.Context(), []container.Summary{
-		{
-			ID:     "first",
-			Image:  "example:3.1.0",
-			Labels: installExcluded,
-		},
-	})
-	require.NoError(t, err)
-	require.Equal(t, firstTarget, checks["first"].LatestVersion)
-
-	// A digest check recorded under another local tag of the running image
-	// applies to every digest-policy container using that image ID.
-	require.NoError(
-		t,
-		db.Create(&imageupdate.ImageUpdateRecord{
-			ID:             "moving-image",
-			Repository:     "docker.io/library/app",
-			Tag:            "stable",
-			CurrentVersion: "stable",
-			HasUpdate:      true,
-			UpdateType:     "digest",
-			CheckTime:      now,
-		}).Error,
-	)
-	digestContainers := []container.Summary{
-		{
-			ID:      "moving",
-			Image:   "app:latest",
-			ImageID: "moving-image",
-		},
-		{
-			ID:      "moving-twin",
-			Image:   "app:latest",
-			ImageID: "moving-image",
-			Labels:  map[string]string{"com.getarcaneapp.arcane.updater": "false"},
-		},
-		{
-			ID:      "moving-unmonitored",
-			Image:   "app:latest",
-			ImageID: "moving-image",
-			Labels:  map[string]string{imageref.UpdateCheckLabel: "false"},
-		},
-		{
-			ID:      "moving-tag",
-			Image:   "app:latest",
-			ImageID: "moving-image",
-			Labels:  map[string]string{"com.getarcaneapp.arcane.updater.strategy": "tag"},
-		},
-		{ID: "moving-no-id", Image: "app:latest"},
-	}
-	checks, err = svc.GetUpdateInfoByContainers(t.Context(), digestContainers)
-	require.NoError(t, err)
-	require.True(t, checks["moving"].HasUpdate)
-	require.True(t, checks["moving-twin"].HasUpdate, "disabling automatic installation keeps the check visible")
-	require.NotContains(t, checks, "moving-unmonitored", "disabling update checks suppresses the result")
-	require.NotContains(t, checks, "moving-tag", "a tag policy never falls back to the shared digest check")
-	require.NotContains(t, checks, "moving-no-id", "a missing runtime image ID matches nothing")
-	require.NotSame(t, checks["moving"], checks["moving-twin"], "each container receives its own copy")
-}
 
 func TestPatchWorkflowDefinitions(t *testing.T) {
 	harness := flowtest.New(t, nil)

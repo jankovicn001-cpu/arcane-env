@@ -11,7 +11,6 @@
 		'defaultShell',
 		'defaultDeployPullPolicy',
 		'toolsImageRegistry',
-		'updateCheckRegistry',
 		'baseServerUrl',
 		'autoInjectEnv',
 		'pruneContainerMode',
@@ -25,7 +24,7 @@
 		'pruneBuildCacheUntil'
 	]}
 >
-	{#snippet content({ formInputs, mixed, environmentId })}
-		<DockerTab {formInputs} {mixed} {environmentId} />
+	{#snippet content({ formInputs, mixed })}
+		<DockerTab {formInputs} {mixed} />
 	{/snippet}
 </EnvironmentSettingsPage>

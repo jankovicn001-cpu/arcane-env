@@ -1,13 +1,9 @@
 package system
 
 import (
-	"cmp"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -15,7 +11,6 @@ import (
 
 	"getarcane.dev/cli/v3/internal/cmdutil"
 	"getarcane.dev/cli/v3/internal/output"
-	"getarcane.dev/cli/v3/internal/runtime"
 	clitypes "getarcane.dev/cli/v3/internal/types"
 	"getarcane.dev/types/v3"
 )
@@ -31,7 +26,6 @@ func Command() *cobra.Command {
 		newDockerInfoCmd(),
 		newSystemContainersCmd(),
 		newConvertCmd(),
-		newUpgradeCmd(),
 	)
 	return cmd
 }
@@ -225,149 +219,4 @@ func newConvertCmd() *cobra.Command {
 	}
 	cmdutil.SetScope(cmdutil.ScopeDestination, cmd)
 	return cmd
-}
-
-func newUpgradeCmd() *cobra.Command {
-	var opts struct{ force, all, status, check bool }
-	cmd := &cobra.Command{
-		Use:          "upgrade",
-		Short:        "Trigger system upgrade",
-		SilenceUsage: true,
-		Args:         cobra.NoArgs,
-		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			if opts.status && !opts.all {
-				return errors.New("--status requires --all")
-			}
-			return cmdutil.ExclusiveFlags(cmd, "check", "all")
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			app, _ := runtime.From(cmd.Context())
-			switch {
-			case opts.check:
-				return cmdutil.RunEnvironments(cmd, args, runUpgradeCheck, false)
-			case app.AllEnvironments() || opts.all:
-				return runUpgradeAll(cmd, opts.force, opts.status)
-			default:
-				confirmed, confirmationErr := cmdutil.ConfirmOrCancel(cmd, cmdutil.ConfirmOptions{Label: "Are you sure you want to upgrade the system?", Force: opts.force})
-				if confirmationErr != nil || !confirmed {
-					return confirmationErr
-				}
-				c, err := cmdutil.ClientFromCommand(cmd)
-				if err != nil {
-					return err
-				}
-				return cmdutil.Run(cmd, c, cmdutil.Spec[any]{
-					Method:         http.MethodPost,
-					Path:           clitypes.SystemUpgrade(c.EnvID()),
-					FailureMessage: "failed to upgrade system",
-					Render:         func(any) error { output.Success("System upgrade initiated"); return nil },
-				})
-			}
-		},
-	}
-	cmd.Flags().BoolVarP(&opts.force, "force", "f", false, "Skip confirmation")
-	cmd.Flags().BoolVar(&opts.all, "all", false, "Update all agents with available updates")
-	cmd.Flags().BoolVar(&opts.status, "status", false, "Show the status of the latest upgrade job (requires --all)")
-	cmd.Flags().BoolVar(&opts.check, "check", false, "Only check whether an upgrade is available")
-	cmdutil.SetScope(cmdutil.ScopeGlobal, cmd)
-	return cmd
-}
-
-func runUpgradeCheck(cmd *cobra.Command, _ []string) error {
-	c, err := cmdutil.ClientFromCommand(cmd)
-	if err != nil {
-		return err
-	}
-	// Upgrade checks return a direct payload rather than an API envelope.
-	body, err := c.DoRaw(cmd.Context(), http.MethodGet, clitypes.SystemUpgradeCheck(c.EnvID()), nil)
-	if err != nil {
-		return fmt.Errorf("failed to check for upgrades: %w", err)
-	}
-	if cmdutil.JSONOutputEnabled(cmd) {
-		return cmdutil.PrintRawJSON(body)
-	}
-	var result types.UpgradeCheckResult
-	if decodeErr := json.Unmarshal(body, &result); decodeErr != nil {
-		return fmt.Errorf("failed to check for upgrades: failed to decode response: %w", decodeErr)
-	}
-	output.Header("Upgrade Check")
-	output.KeyValue("Can Upgrade", strconv.FormatBool(result.CanUpgrade))
-	output.KeyValue("Message", result.Message)
-	if result.Error {
-		output.KeyValue("Error", "true")
-	}
-	return nil
-}
-
-func runUpgradeAll(cmd *cobra.Command, force, status bool) error {
-	app, _ := runtime.From(cmd.Context())
-	if app.AllEnvironments() {
-		environments, discoveryErr := app.Environments(cmd.Context())
-		if discoveryErr != nil {
-			return discoveryErr
-		}
-		if len(environments) == 0 {
-			return errors.New("no enabled agents available")
-		}
-		app.SelectEnvironment("0")
-		defer app.SelectEnvironment("")
-	}
-	c, err := cmdutil.ClientFromCommand(cmd)
-	if err != nil {
-		return err
-	}
-	if status {
-		return cmdutil.Run(cmd, c, cmdutil.Spec[types.UpgradeJob]{
-			Method:         http.MethodGet,
-			Path:           clitypes.SystemUpgradeJobCurrent(c.EnvID()),
-			FailureMessage: "failed to get upgrade job status",
-			Render: func(data types.UpgradeJob) error {
-				output.Header("Upgrade Job Status")
-				return renderUpgradeResults(data)
-			},
-		})
-	}
-	confirmed, confirmationErr := cmdutil.ConfirmOrCancel(cmd, cmdutil.ConfirmOptions{Label: "Are you sure you want to update all agents?", Force: force})
-	if confirmationErr != nil || !confirmed {
-		return confirmationErr
-	}
-	return cmdutil.Run(cmd, c, cmdutil.Spec[types.UpgradeJob]{
-		Method:         http.MethodPost,
-		Path:           clitypes.SystemUpgradeJobs(c.EnvID()),
-		FailureMessage: "failed to start upgrade job",
-		Render: func(data types.UpgradeJob) error {
-			output.Success("Upgrade job started")
-			return renderUpgradeResults(data)
-		},
-	})
-}
-
-func renderUpgradeResults(job types.UpgradeJob) error {
-	output.KeyValue("Status", job.Status)
-	if job.Username != "" {
-		output.KeyValue("Triggered By", job.Username)
-	}
-	if job.ManagerVersionAtStart != "" {
-		output.KeyValue("Manager Version", job.ManagerVersionAtStart)
-	}
-	if job.ManagerTargetVersion != "" {
-		output.KeyValue("Target Version", job.ManagerTargetVersion)
-	}
-	if kit.FromPtr(job.Error) != "" {
-		output.KeyValue("Error", *job.Error)
-	}
-	if job.CompletedAt != nil {
-		output.KeyValue("Completed At", job.CompletedAt.Format(time.RFC3339))
-	}
-	if len(job.Results) == 0 {
-		return nil
-	}
-	rows := make([][]string, len(job.Results))
-	for i, res := range job.Results {
-		rows[i] = []string{cmp.Or(res.EnvironmentName, res.EnvironmentID), res.Status, res.FromVersion, res.ToVersion, cmp.Or(res.Error, "-")}
-	}
-	if _, spacingErr := fmt.Fprintln(output.Stdout()); spacingErr != nil {
-		return fmt.Errorf("failed to print update status: %w", spacingErr)
-	}
-	return output.Table([]string{"AGENT", "STATUS", "FROM", "TO", "ERROR"}, rows)
 }

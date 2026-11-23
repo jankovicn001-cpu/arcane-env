@@ -35,7 +35,6 @@ export type DashboardWidget = DashboardWidgetInput & { id: string };
 export const DASHBOARD_WIDGET_TYPES: Record<DashboardWidgetType, DashboardWidgetDefinition> = {
 	healthy: { label: m.online_environments, minW: 2, minH: 2, maxH: 4, multi: false, defaultW: 3, defaultH: 2, summary: true },
 	attentionCount: { label: m.attention_count, minW: 2, minH: 2, maxH: 4, multi: false, defaultW: 3, defaultH: 2, summary: true },
-	updates: { label: m.updates, minW: 2, minH: 2, maxH: 4, multi: false, defaultW: 3, defaultH: 2, summary: true },
 	risk: { label: m.risk_score, minW: 2, minH: 2, maxH: 4, multi: false, defaultW: 3, defaultH: 2, summary: true },
 	reclaimableTotal: { label: m.reclaimable, minW: 2, minH: 2, maxH: 4, multi: false, defaultW: 3, defaultH: 2, summary: true },
 	environments: { label: m.environments_title, minW: 6, minH: 4, maxH: 12, multi: false, defaultW: 12, defaultH: 6 },
@@ -57,10 +56,9 @@ export function defaultDashboardLayout(environmentCount: number): DashboardWidge
 	const tableHeight = Math.min(Math.max(environmentCount + 2, 4), 10);
 	const below = 2 + tableHeight;
 	return [
-		{ id: 'healthy', type: 'healthy', x: 0, y: 0, w: 3, h: 2 },
-		{ id: 'attentionCount', type: 'attentionCount', x: 3, y: 0, w: 3, h: 2 },
-		{ id: 'updates', type: 'updates', x: 6, y: 0, w: 3, h: 2 },
-		{ id: 'risk', type: 'risk', x: 9, y: 0, w: 3, h: 2 },
+		{ id: 'healthy', type: 'healthy', x: 0, y: 0, w: 4, h: 2 },
+		{ id: 'attentionCount', type: 'attentionCount', x: 4, y: 0, w: 4, h: 2 },
+		{ id: 'risk', type: 'risk', x: 8, y: 0, w: 4, h: 2 },
 		{ id: 'environments', type: 'environments', x: 0, y: 2, w: 12, h: tableHeight },
 		{ id: 'attention', type: 'attention', x: 0, y: below, w: 8, h: 5 },
 		{ id: 'activity', type: 'activity', x: 0, y: below + 5, w: 8, h: 4 },

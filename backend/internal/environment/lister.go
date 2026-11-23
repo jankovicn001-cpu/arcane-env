@@ -1,6 +1,7 @@
 package environment
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -21,6 +22,9 @@ type Lister struct {
 	db      *database.DB
 	tunnels *agent.TunnelRegistry
 }
+
+// unassignedGroupFilter is the groupId filter value that matches agents without a group.
+const unassignedGroupFilter = "none"
 
 func NewLister(db *database.DB, tunnels *agent.TunnelRegistry) *Lister {
 	return &Lister{
@@ -46,10 +50,13 @@ func (l *Lister) ListAccessibleEnvironments(ctx context.Context, ps *authz.Permi
 }
 
 func (l *Lister) ListEnvironmentsPaginated(ctx context.Context, params pagination.QueryParams, accessibleEnvIDs []string) ([]types.Environment, pagination.Response, error) {
-	if strings.TrimSpace(params.Filters["type"]) != "" || strings.TrimSpace(params.Filters["status"]) != "" || params.Sort == "status" {
+	// Group sorting and filtering run in memory because they read the preloaded group.
+	if strings.TrimSpace(params.Filters["type"]) != "" || strings.TrimSpace(params.Filters["status"]) != "" || strings.TrimSpace(params.Filters["groupId"]) != "" ||
+		params.Sort == "status" || params.Sort == "group" {
 		var envs []Environment
 		if err := l.db.WithContext(ctx).
 			Model(&Environment{}).
+			Preload("Group").
 			Where("hidden = ?", false).
 			Find(&envs).Error; err != nil {
 			return nil, pagination.Response{}, fmt.Errorf("failed to list environments: %w", err)
@@ -74,6 +81,7 @@ func (l *Lister) ListEnvironmentsPaginated(ctx context.Context, params paginatio
 			SearchAccessors: []pagination.SearchAccessor[types.Environment]{
 				func(env types.Environment) (string, error) { return env.Name, nil },
 				func(env types.Environment) (string, error) { return env.ApiUrl, nil },
+				func(env types.Environment) (string, error) { return kit.FromPtr(env.Group).Name, nil },
 			},
 			SortBindings: []pagination.SortBinding[types.Environment]{
 				{
@@ -86,6 +94,15 @@ func (l *Lister) ListEnvironmentsPaginated(ctx context.Context, params paginatio
 					Key: "name",
 					Fn: func(a, b types.Environment) int {
 						return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+					},
+				},
+				{
+					Key: "group",
+					Fn: func(a, b types.Environment) int {
+						return cmp.Or(
+							strings.Compare(strings.ToLower(kit.FromPtr(a.Group).Name), strings.ToLower(kit.FromPtr(b.Group).Name)),
+							strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)),
+						)
 					},
 				},
 				{
@@ -115,6 +132,12 @@ func (l *Lister) ListEnvironmentsPaginated(ctx context.Context, params paginatio
 					Key: "status",
 					Fn: func(item types.Environment, filterValue string) bool {
 						return strings.EqualFold(item.Status, strings.TrimSpace(filterValue))
+					},
+				},
+				{
+					Key: "groupId",
+					Fn: func(item types.Environment, filterValue string) bool {
+						return slices.Contains(kit.TrimNonEmpty(strings.Split(filterValue, ",")), cmp.Or(item.GroupID, unassignedGroupFilter))
 					},
 				},
 				{
@@ -149,7 +172,7 @@ func (l *Lister) ListEnvironmentsPaginated(ctx context.Context, params paginatio
 	}
 
 	var envs []Environment
-	q := l.db.WithContext(ctx).Model(&Environment{}).Where("hidden = ?", false)
+	q := l.db.WithContext(ctx).Model(&Environment{}).Preload("Group").Where("hidden = ?", false)
 	// nil means no restriction; a non-nil slice limits results, so an empty one matches nothing.
 	switch {
 	case accessibleEnvIDs == nil:
@@ -162,8 +185,8 @@ func (l *Lister) ListEnvironmentsPaginated(ctx context.Context, params paginatio
 	if term := strings.TrimSpace(params.Search); term != "" {
 		searchPattern := "%" + term + "%"
 		q = q.Where(
-			"name LIKE ? OR api_url LIKE ?",
-			searchPattern, searchPattern,
+			"name LIKE ? OR api_url LIKE ? OR group_id IN (SELECT id FROM environment_groups WHERE name LIKE ?)",
+			searchPattern, searchPattern, searchPattern,
 		)
 	}
 
@@ -190,9 +213,11 @@ func (l *Lister) ApplyRuntimeState(env types.Environment) types.Environment {
 
 	runtimeState, connected := l.tunnels.RuntimeState(env.ID).Get()
 	return types.Environment{ //exhaustruct:enforce
-		ID:     env.ID,
-		Name:   env.Name,
-		ApiUrl: env.ApiUrl,
+		ID:      env.ID,
+		Name:    env.Name,
+		GroupID: env.GroupID,
+		Group:   env.Group,
+		ApiUrl:  env.ApiUrl,
 		Status: func() string {
 			switch {
 			case connected && l.tunnels.Readiness(env.ID).State == agent.ReadinessNotReady:

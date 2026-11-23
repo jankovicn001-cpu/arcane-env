@@ -10,24 +10,14 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"kit.getarcane.app"
-	"kit.getarcane.app/concurrency"
-
 	"getarcane.dev/arcane/v3/internal/scheduler/runs"
 	"getarcane.dev/types/v3"
 )
 
 type (
-	watcherRegistration struct {
-		watcher    types.BusWatcher
-		supervisor *concurrency.Supervisor
-	}
-
 	jobScheduler struct {
 		context     context.Context
 		jobsByID    map[string]types.SchedulerJob
-		watchers    map[string]types.BusWatcher
-		allWatchers map[string]watcherRegistration
 		cancel      context.CancelFunc
 		location    *time.Location
 		coordinator *runs.Coordinator
@@ -53,8 +43,6 @@ func NewJobScheduler(ctx context.Context, coordinator *runs.Coordinator, locatio
 			location:    location,
 			coordinator: coordinator,
 			jobsByID:    map[string]types.SchedulerJob{},
-			watchers:    map[string]types.BusWatcher{},
-			allWatchers: map[string]watcherRegistration{},
 		},
 		nil
 }
@@ -70,38 +58,6 @@ func (js *jobScheduler) RegisterJob(job types.SchedulerJob) error {
 	}
 	js.jobsByID[job.Name()] = job
 	return nil
-}
-
-func (js *jobScheduler) RegisterBusWatcher(watcher types.BusWatcher, manual bool) error {
-	js.mu.Lock()
-	defer js.mu.Unlock()
-	if js.stopping {
-		return errJobSchedulerStopped
-	}
-	if _, found := js.allWatchers[watcher.Name()]; found {
-		return errors.New("watcher already registered")
-	}
-	js.allWatchers[watcher.Name()] = watcherRegistration{
-		watcher: watcher,
-		supervisor: concurrency.Supervise(js.context, concurrency.SuperviseConfig{
-			Run:  watcher.Start,
-			Name: watcher.Name(),
-		}),
-	}
-	if manual {
-		js.watchers[watcher.Name()] = watcher
-	}
-	return nil
-}
-
-func (js *jobScheduler) RunBusWatcherNow(ctx context.Context, id string) error {
-	js.mu.RLock()
-	watcher, found := js.watchers[id]
-	js.mu.RUnlock()
-	if !found {
-		return errors.New("watcher is not manually runnable")
-	}
-	return watcher.RunNow(ctx)
 }
 
 func (js *jobScheduler) GetJob(id string) (types.SchedulerJob, bool) {
@@ -141,10 +97,7 @@ func (js *jobScheduler) StartScheduler(ctx context.Context) error {
 		return err
 	}
 	for _, record := range records {
-		js.mu.RLock()
-		_, watching := js.watchers[record.JobID]
-		js.mu.RUnlock()
-		if record.EnvironmentID == "0" && record.Schedule != "" && !js.HasJob(record.JobID) && !watching {
+		if record.EnvironmentID == "0" && record.Schedule != "" && !js.HasJob(record.JobID) {
 			if removeErr := js.coordinator.Install(ctx, record.JobID, ""); removeErr != nil {
 				return removeErr
 			}
@@ -197,26 +150,12 @@ func (js *jobScheduler) RemoveJob(ctx context.Context, id string) {
 
 func (js *jobScheduler) GetLocation() *time.Location { return js.location }
 
-func (js *jobScheduler) Stop(ctx context.Context) error {
+func (js *jobScheduler) Stop(context.Context) error {
 	js.mu.Lock()
 	js.stopping = true
 	js.cancel()
-	watchers := make([]watcherRegistration, 0, len(js.allWatchers))
-	for _, w := range js.allWatchers {
-		watchers = append(watchers, w)
-	}
 	js.mu.Unlock()
-	var err error
-	for _, w := range watchers {
-		if stopErr := w.supervisor.Stop(ctx); stopErr != nil {
-			err = errors.Join(err, stopErr)
-			continue
-		}
-		if stop, ok := w.watcher.(types.StoppableBusWatcher); ok {
-			err = errors.Join(err, stop.Stop(ctx))
-		}
-	}
-	return err
+	return nil
 }
 
 func (js *jobScheduler) Submit(ctx context.Context, request types.SchedulerRequest) (types.SchedulerRun, error) {
@@ -234,40 +173,4 @@ func (js *jobScheduler) ListRegisteredJobs() []types.SchedulerJob {
 		jobs = append(jobs, job)
 	}
 	return jobs
-}
-
-func (js *jobScheduler) RestartWatcher(ctx context.Context, id string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	js.mu.RLock()
-	registration, ok := js.allWatchers[id]
-	stopping := js.stopping
-	js.mu.RUnlock()
-	if stopping {
-		return errJobSchedulerStopped
-	}
-	if !ok {
-		return errors.New("watcher not found")
-	}
-	registration.supervisor.Restart()
-	return nil
-}
-
-func (js *jobScheduler) WatcherHealth(id string) (types.SchedulerWorkerHealth, bool) {
-	js.mu.RLock()
-	registration, ok := js.allWatchers[id]
-	js.mu.RUnlock()
-	if !ok {
-		return types.SchedulerWorkerHealth{}, false
-	}
-	state := registration.supervisor.State()
-	watcher, local := registration.watcher.(*ImageUpdateWatcher)
-	degraded := local && watcher.eventDegraded.Load() && state.Status == concurrency.SupervisorRunning
-	return types.SchedulerWorkerHealth{
-		UpdatedAt: state.UpdatedAt,
-		NextRetry: state.NextRetry,
-		Status:    kit.Ternary(degraded, "degraded", string(state.Status)),
-		LastError: kit.Ternary(degraded, "Docker image event subscription unavailable; polling remains active", state.LastError),
-	}, true
 }

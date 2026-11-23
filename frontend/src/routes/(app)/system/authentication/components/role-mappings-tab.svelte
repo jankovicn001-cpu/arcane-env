@@ -10,7 +10,7 @@
 	import { oidcMappingListQuery } from '#lib/query/oidc-mappings.js';
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { oidcMappingService } from '#lib/services/oidc-mapping-service.js';
-	import type { Environment } from '#lib/types/environment.js';
+	import type { Environment, EnvironmentGroupRef } from '#lib/types/environment.js';
 	import type { OidcRoleMapping, Role } from '#lib/types/role.js';
 	import type { OidcRoleMappingWritable } from '#lib/types/ui/role.js';
 	import { handleApiResultWithCallbacks } from '#lib/utils/api.js';
@@ -23,9 +23,10 @@
 		initialMappings: OidcRoleMapping[];
 		roles: Role[];
 		environments: Environment[];
+		groups: EnvironmentGroupRef[];
 	}
 
-	let { initialMappings, roles, environments }: Props = $props();
+	let { initialMappings, roles, environments, groups }: Props = $props();
 
 	const queryClient = useQueryClient();
 	const oidcMappingsQuery = createQuery(() => oidcMappingListQuery());
@@ -53,7 +54,14 @@
 				result: await tryCatch(
 					oidcMappingService.update(
 						id,
-						changedFields({ ...editingMapping, environmentId: editingMapping.environmentId ?? null }, formData)
+						changedFields(
+							{
+								...editingMapping,
+								environmentId: editingMapping.environmentId ?? null,
+								environmentGroupId: editingMapping.environmentGroupId ?? null
+							},
+							formData
+						)
 					)
 				),
 				message: m.common_update_failed({ resource: m.resource_oidc_mapping() }),
@@ -66,7 +74,13 @@
 			});
 		} else {
 			await handleApiResultWithCallbacks({
-				result: await tryCatch(oidcMappingService.create({ ...formData, environmentId: formData.environmentId ?? undefined })),
+				result: await tryCatch(
+					oidcMappingService.create({
+						...formData,
+						environmentId: formData.environmentId ?? undefined,
+						environmentGroupId: formData.environmentGroupId ?? undefined
+					})
+				),
 				message: m.common_create_failed({ resource: m.resource_oidc_mapping() }),
 				setLoadingState: (v) => (mappingSaving = v),
 				onSuccess: async () => {
@@ -94,6 +108,7 @@
 				mappings={oidcMappings}
 				{roles}
 				{environments}
+				{groups}
 				onRetry={() => oidcMappingsQuery.refetch()}
 				onEdit={openEditMapping}
 			/>
@@ -112,6 +127,7 @@
 		isLoading={mappingSaving}
 		{roles}
 		{environments}
+		{groups}
 		onSubmit={submitMapping}
 	/>
 {/key}

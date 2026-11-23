@@ -521,74 +521,6 @@ func TestActivityServiceCancelActivity(t *testing.T) {
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
-func TestActivityServiceFailStaleImageUpdateChecks(t *testing.T) {
-	ctx := t.Context()
-	db := setupActivityServiceTestDB(t)
-	service := NewActivityService(db, nil)
-
-	staleCheck, err := service.StartActivity(ctx, StartActivityRequest{
-		EnvironmentID: "0",
-		Type:          types.ActivityTypeImageUpdateCheck,
-		LatestMessage: "checking",
-	})
-	require.NoError(t, err)
-	freshCheck, err := service.StartActivity(ctx, StartActivityRequest{
-		EnvironmentID: "0",
-		Type:          types.ActivityTypeImageUpdateCheck,
-		LatestMessage: "checking",
-	})
-	require.NoError(t, err)
-	staleOtherType, err := service.StartActivity(ctx, StartActivityRequest{
-		EnvironmentID: "0",
-		Type:          types.ActivityTypeImagePull,
-		LatestMessage: "pulling",
-	})
-	require.NoError(t, err)
-	completedCheck, err := service.StartActivity(ctx, StartActivityRequest{
-		EnvironmentID: "0",
-		Type:          types.ActivityTypeImageUpdateCheck,
-		LatestMessage: "checking",
-	})
-	require.NoError(t, err)
-	_, err = service.CompleteActivity(ctx, completedCheck.ID, types.ActivityStatusSuccess, "complete", nil)
-	require.NoError(t, err)
-
-	oldStartedAt := time.Now().Add(-7 * time.Hour)
-	for _, id := range []string{staleCheck.ID, staleOtherType.ID, completedCheck.ID} {
-		require.NoError(t, db.Model(&Activity{}).Where("id = ?", id).Updates(map[string]any{
-			"started_at": oldStartedAt,
-			"updated_at": oldStartedAt,
-		}).Error)
-	}
-
-	failed, err := service.FailStaleImageUpdateChecks(ctx)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, failed)
-
-	var stale Activity
-	require.NoError(t, db.First(&stale, "id = ?", staleCheck.ID).Error)
-	require.Equal(t, types.ActivityStatusFailed, stale.Status)
-	require.NotNil(t, stale.EndedAt)
-	require.NotNil(t, stale.DurationMs)
-	require.Contains(t, stale.LatestMessage, "stale")
-	require.NotNil(t, stale.Error)
-	require.Contains(t, *stale.Error, "stale")
-
-	var fresh Activity
-	require.NoError(t, db.First(&fresh, "id = ?", freshCheck.ID).Error)
-	require.Equal(t, types.ActivityStatusRunning, fresh.Status)
-	require.Nil(t, fresh.EndedAt)
-
-	var other Activity
-	require.NoError(t, db.First(&other, "id = ?", staleOtherType.ID).Error)
-	require.Equal(t, types.ActivityStatusRunning, other.Status)
-	require.Nil(t, other.EndedAt)
-
-	var completed Activity
-	require.NoError(t, db.First(&completed, "id = ?", completedCheck.ID).Error)
-	require.Equal(t, types.ActivityStatusSuccess, completed.Status)
-}
-
 func TestActivityServiceFailAbandonedActivities(t *testing.T) {
 	ctx := t.Context()
 	db := setupActivityServiceTestDB(t)
@@ -596,19 +528,19 @@ func TestActivityServiceFailAbandonedActivities(t *testing.T) {
 
 	abandoned, err := service.StartActivity(ctx, StartActivityRequest{
 		EnvironmentID: "0",
-		Type:          types.ActivityTypeImageUpdateCheck,
+		Type:          types.ActivityTypeImagePull,
 		LatestMessage: "checking",
 	})
 	require.NoError(t, err)
 	tracked, err := service.StartActivity(ctx, StartActivityRequest{
 		EnvironmentID: "0",
-		Type:          types.ActivityTypeAutoUpdate,
+		Type:          types.ActivityTypeResourceAction,
 		LatestMessage: "updating",
 	})
 	require.NoError(t, err)
 	fresh, err := service.StartActivity(ctx, StartActivityRequest{
 		EnvironmentID: "0",
-		Type:          types.ActivityTypeImageUpdateCheck,
+		Type:          types.ActivityTypeImagePull,
 		LatestMessage: "checking",
 	})
 	require.NoError(t, err)
@@ -636,54 +568,6 @@ func TestActivityServiceFailAbandonedActivities(t *testing.T) {
 	var freshRow Activity
 	require.NoError(t, db.First(&freshRow, "id = ?", fresh.ID).Error)
 	require.Equal(t, types.ActivityStatusRunning, freshRow.Status)
-}
-
-func TestActivityServiceResolveStaleAutoUpdateActivities(t *testing.T) {
-	ctx := t.Context()
-	db := setupActivityServiceTestDB(t)
-	service := NewActivityService(db, nil)
-
-	selfUpdateRun, err := service.StartActivity(ctx, StartActivityRequest{
-		EnvironmentID: "0",
-		Type:          types.ActivityTypeAutoUpdate,
-		LatestMessage: "updating",
-		Metadata:      database.JSON{"dryRun": false},
-	})
-	require.NoError(t, err)
-	require.NoError(t, service.PatchActivityMetadata(ctx, selfUpdateRun.ID, database.JSON{"selfUpdateTriggered": true}))
-
-	interruptedRun, err := service.StartActivity(ctx, StartActivityRequest{
-		EnvironmentID: "0",
-		Type:          types.ActivityTypeAutoUpdate,
-		LatestMessage: "updating",
-	})
-	require.NoError(t, err)
-	otherType, err := service.StartActivity(ctx, StartActivityRequest{
-		EnvironmentID: "0",
-		Type:          types.ActivityTypeImagePull,
-		LatestMessage: "pulling",
-	})
-	require.NoError(t, err)
-
-	resolved, err := service.ResolveStaleAutoUpdateActivities(ctx)
-	require.NoError(t, err)
-	require.EqualValues(t, 2, resolved)
-
-	var selfUpdated Activity
-	require.NoError(t, db.First(&selfUpdated, "id = ?", selfUpdateRun.ID).Error)
-	require.Equal(t, types.ActivityStatusSuccess, selfUpdated.Status)
-	require.NotNil(t, selfUpdated.EndedAt)
-	require.Contains(t, selfUpdated.LatestMessage, "restarted with the updated image")
-	require.Equal(t, false, selfUpdated.Metadata["dryRun"])
-
-	var interrupted Activity
-	require.NoError(t, db.First(&interrupted, "id = ?", interruptedRun.ID).Error)
-	require.Equal(t, types.ActivityStatusFailed, interrupted.Status)
-	require.Contains(t, interrupted.LatestMessage, "interrupted")
-
-	var other Activity
-	require.NoError(t, db.First(&other, "id = ?", otherType.ID).Error)
-	require.Equal(t, types.ActivityStatusRunning, other.Status)
 }
 
 func receiveActivityEvent(t *testing.T, events <-chan types.ActivityStreamEvent) types.ActivityStreamEvent {
@@ -995,11 +879,11 @@ func TestActivityService_StartActivityWithIDIsIdempotent(t *testing.T) {
 	db := setupActivityServiceTestDB(t)
 	service := NewActivityService(db, nil)
 
-	first, err := service.StartActivity(t.Context(), StartActivityRequest{ID: "workflow-activity", Type: types.ActivityTypeAutoUpdate, LatestMessage: "first"})
+	first, err := service.StartActivity(t.Context(), StartActivityRequest{ID: "workflow-activity", Type: types.ActivityTypeResourceAction, LatestMessage: "first"})
 	require.NoError(t, err)
 	require.Equal(t, "workflow-activity", first.ID)
 
-	again, err := service.StartActivity(t.Context(), StartActivityRequest{ID: "workflow-activity", Type: types.ActivityTypeAutoUpdate, LatestMessage: "redelivered"})
+	again, err := service.StartActivity(t.Context(), StartActivityRequest{ID: "workflow-activity", Type: types.ActivityTypeResourceAction, LatestMessage: "redelivered"})
 	require.NoError(t, err)
 	require.Equal(t, first.ID, again.ID)
 	require.Equal(t, "first", again.LatestMessage)

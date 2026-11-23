@@ -201,14 +201,4 @@ func RegisterContainers(
 		Tags:        []string{"Containers"},
 		Security:    handlerutil.DefaultOperationSecurity(),
 	}, authz.PermContainersLogs, h.DownloadContainerLogs)
-
-	middleware.RegisterWithPermission(api, huma.Operation{
-		OperationID: "set-container-auto-update",
-		Method:      http.MethodPut,
-		Path:        "/agents/{id}/containers/{containerId}/autoupdate",
-		Summary:     "Set container auto-update",
-		Description: "Enable or disable auto-update for a specific container",
-		Tags:        []string{"Containers", "Updater"},
-		Security:    handlerutil.DefaultOperationSecurity(),
-	}, authz.PermContainersAutoUpdate, h.SetAutoUpdate)
 }

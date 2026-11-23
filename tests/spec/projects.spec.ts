@@ -15,7 +15,6 @@ import { expect as vitestExpect } from 'vite-plus/test';
 const ROUTES = {
 	page: '/projects',
 	apiProjects: '/api/agents/0/projects',
-	apiUpdaterRun: '/api/agents/0/updater/run',
 	newProject: '/projects/new'
 };
 
@@ -27,32 +26,6 @@ const DEPLOY_STREAM_SUCCESS =
 async function navigateToProjects(page: Page) {
 	await page.goto(ROUTES.page);
 	await page.waitForLoadState('load');
-}
-
-async function clickProjectsPageUpdateAction(page: Page) {
-	const updateProjectsButton = page.getByRole('button', { name: 'Update Projects', exact: true });
-	await expect(updateProjectsButton).toBeVisible();
-	await updateProjectsButton.click();
-}
-
-async function clickProjectDetailUpdateAction(page: Page) {
-	const recheckButton = page.getByRole('button', { name: 'Re-check Updates', exact: true }).first();
-	const updateTrigger = page.getByTestId('project-update-trigger').first();
-	await expect(recheckButton.or(updateTrigger).filter({ visible: true }).first()).toBeVisible();
-	if (await recheckButton.isVisible()) {
-		await recheckButton.click();
-		return true;
-	}
-	if (await updateTrigger.evaluate((element) => element.tagName === 'BUTTON')) {
-		await updateTrigger.click();
-		return true;
-	}
-
-	const usesTouchPopover = await page.evaluate(() => window.matchMedia('(hover: none)').matches);
-	if (usesTouchPopover) await updateTrigger.click();
-	else await updateTrigger.hover();
-	await recheckButton.click();
-	return true;
 }
 
 async function fetchProjectDetail(
@@ -426,44 +399,6 @@ test.describe('Projects Page', () => {
 			await expect(page.getByRole('link', { name: firstProject.name })).toBeVisible();
 			await searchInput.clear();
 		}
-	});
-
-	test('should check project updates without triggering updater run', async ({ page }) => {
-		let checkAllRequests = 0;
-		let updaterRunRequests = 0;
-
-		await page.route(
-			(url) =>
-				url.pathname.endsWith('/images/updates/check') && url.searchParams.get('action') === 'all',
-			async (route) => {
-				checkAllRequests += 1;
-				await route.fulfill({
-					status: 200,
-					contentType: 'application/json',
-					body: JSON.stringify({ success: true, data: {} })
-				});
-			}
-		);
-
-		await page.route('**/api/agents/*/updater/run', async (route) => {
-			updaterRunRequests += 1;
-			await route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: { items: [] } })
-			});
-		});
-
-		await clickProjectsPageUpdateAction(page);
-
-		// The check only starts once the confirmation dialog is accepted
-		const dialog = page.getByRole('dialog');
-		await expect(dialog).toBeVisible();
-		expect(checkAllRequests).toBe(0);
-		await dialog.getByRole('button', { name: 'Update Projects', exact: true }).click();
-
-		await expect.poll(() => checkAllRequests).toBe(1);
-		expect(updaterRunRequests).toBe(0);
 	});
 
 	test('should display project status badges', async ({ page }) => {
@@ -1180,51 +1115,6 @@ test.describe('Project Detail Page', () => {
 		).toBeVisible();
 		await expect(page.getByRole('tab', { name: 'Configuration', exact: true })).toBeVisible();
 		await expect(page.getByRole('tab', { name: 'Logs', exact: true })).toHaveCount(0);
-	});
-
-	test('should check updates for the current project without deploying it', async ({ page }) => {
-		const projectName = `test-project-update-check-${Date.now()}`;
-		const projectID = await createProjectViaUI(page, projectName);
-		const project = await readApiData<Project>(
-			await page.request.get(`/api/agents/0/projects/${projectID}/updates`),
-			`Get project ${projectID} update metadata`
-		);
-		expect(
-			project.updateInfo?.imageRefs?.length,
-			'Created project must expose its configured image'
-		).toBeGreaterThan(0);
-
-		let checkRequests = 0;
-		let updaterRunRequests = 0;
-
-		await page.route(`**/api/agents/*/updater/projects/${projectID}/check`, async (route) => {
-			checkRequests += 1;
-			expect(route.request().method()).toBe('POST');
-			expect(route.request().postDataJSON()).toEqual({});
-			await route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: project.updateInfo })
-			});
-		});
-
-		await page.route('**/api/agents/*/updater/run', async (route) => {
-			updaterRunRequests += 1;
-			await route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: { items: [] } })
-			});
-		});
-
-		await page.goto(`/projects/${projectID}?env=0`);
-		await page.waitForLoadState('load');
-
-		const clicked = await clickProjectDetailUpdateAction(page);
-		expect(clicked, 'Current project detail view has no clickable update action').toBeTruthy();
-
-		await expect.poll(() => checkRequests).toBe(1);
-		expect(updaterRunRequests).toBe(0);
 	});
 
 	test(

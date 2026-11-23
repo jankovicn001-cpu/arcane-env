@@ -4,7 +4,6 @@
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import { mode } from 'mode-watcher';
 	import type { Snippet } from 'svelte';
-	import { toast } from 'svelte-sonner';
 
 	import ArcaneTable from '#lib/components/arcane-table/arcane-table.svelte';
 	import ActionMenuItem from '#lib/components/arcane-table/cells/action-menu-item.svelte';
@@ -17,7 +16,6 @@
 	import IconImage from '#lib/components/icon-image.svelte';
 	import IfPermitted from '#lib/components/if-permitted.svelte';
 	import ProjectTagEditor from '#lib/components/project-tag-editor.svelte';
-	import ProjectUpdateItem from '#lib/components/project-update-item.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
@@ -45,23 +43,15 @@
 	import { m } from '#lib/paraglide/messages.js';
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { projectService } from '#lib/services/project-service.js';
-	import { environmentStore } from '#lib/stores/environment.store.svelte.js';
+	import { environmentStore, type EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
 	import type { Paginated } from '#lib/types/base.js';
 	import type { Project, ProjectTagColor, ProjectTagOption } from '#lib/types/project.js';
 	import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 	import { hasPermission } from '#lib/utils/auth.js';
 	import { hasAnyLoadingState } from '#lib/utils/bulk-actions.js';
 	import { getStatusVariant, getThemedIconUrl } from '#lib/utils/docker.js';
-	import {
-		getProjectUpdateStatus,
-		getProjectUpdateText,
-		getProjectUpdateTooltip,
-		getProjectUpdateVariant
-	} from '#lib/utils/docker.js';
 	import { type EnvironmentPage, type EnvironmentRow, hasShownPermission, rowKey } from '#lib/utils/environments.js';
 	import { capitalizeFirstLetter, formatDateTimeShort } from '#lib/utils/formatting.js';
-	import { tryCatch } from '#lib/utils/try-catch.js';
-	import { summarizeUpdateCheckResult } from '#lib/utils/update-actions.js';
 
 	import { createProjectActions } from '../projects-table.actions';
 	import type { ActionStatus } from '../projects-table.helpers';
@@ -70,6 +60,8 @@
 
 	let {
 		projects,
+		environments,
+		persistKey = 'arcane-project-table',
 		selectedIds = $bindable(),
 		requestOptions = $bindable(),
 		withoutFilters = false,
@@ -81,6 +73,9 @@
 		emptyState
 	}: {
 		projects: EnvironmentPage<Paginated<Project>>;
+		/** Environments the table covers; defaults to every shown environment. */
+		environments?: EnvironmentRef[];
+		persistKey?: string;
 		selectedIds: string[];
 		requestOptions: SearchPaginationSortRequest;
 		withoutFilters?: boolean;
@@ -93,7 +88,6 @@
 	} = $props();
 
 	const actionStatus = $state<Record<string, ActionStatus>>({});
-	let checkingProjectIds = $state<Record<string, boolean>>({});
 	let transferOpen = $state(false);
 	let transferProject = $state<ProjectRow | null>(null);
 	let tagCatalog = $derived(availableTags);
@@ -106,39 +100,15 @@
 		destroy: false
 	});
 
+	const tableEnvironments = $derived(environments ?? environmentStore.shown);
+	const environmentsKey = $derived(tableEnvironments.map((env) => env.id).join(','));
+	// A table pinned to one environment needs no environment column or facet.
+	const showEnvironmentColumn = $derived(environments === undefined || environments.length > 1);
+
 	const queryClient = useQueryClient();
 
 	async function refreshProjects() {
-		await queryClient.invalidateQueries({ queryKey: queryKeys.projects.listPrefix(environmentStore.shownKey) });
-	}
-
-	async function checkProjectUpdates(project: ProjectRow) {
-		const result = await projectService.checkUpdates(project.id, project.environmentId);
-		summarizeUpdateCheckResult(result);
-		await refreshProjects();
-	}
-
-	async function handleCheckProjectUpdates(project: ProjectRow) {
-		if (checkingProjectIds[rowKey(project)]) {
-			return;
-		}
-
-		checkingProjectIds = {
-			...checkingProjectIds,
-			[rowKey(project)]: true
-		};
-
-		try {
-			const checked = await tryCatch(checkProjectUpdates(project));
-			if (checked.error !== null) {
-				toast.error(m.containers_check_updates_failed());
-			}
-		} finally {
-			checkingProjectIds = {
-				...checkingProjectIds,
-				[rowKey(project)]: false
-			};
-		}
+		await queryClient.invalidateQueries({ queryKey: queryKeys.projects.listPrefix(environmentsKey) });
 	}
 
 	async function handleTagToggle(project: ProjectRow, name: string, attached: boolean, color: ProjectTagColor) {
@@ -164,10 +134,10 @@
 	}
 
 	let mobileFieldVisibility = $state<Record<string, boolean>>({});
-	const canDeployProject = $derived(hasShownPermission('projects:deploy'));
-	const canDownProject = $derived(hasShownPermission('projects:down'));
-	const canArchiveProject = $derived(hasShownPermission('projects:archive'));
-	const canDeleteProject = $derived(hasShownPermission('projects:delete'));
+	const canDeployProject = $derived(hasShownPermission('projects:deploy', tableEnvironments));
+	const canDownProject = $derived(hasShownPermission('projects:down', tableEnvironments));
+	const canArchiveProject = $derived(hasShownPermission('projects:archive', tableEnvironments));
+	const canDeleteProject = $derived(hasShownPermission('projects:delete', tableEnvironments));
 
 	const {
 		performProjectAction,
@@ -210,7 +180,7 @@
 	const columns = $derived.by(
 		() =>
 			[
-				...environmentColumns<ProjectRow>(),
+				...(showEnvironmentColumn ? environmentColumns<ProjectRow>() : []),
 				{ accessorKey: 'id', title: m.common_id(), hidden: true },
 				{ accessorKey: 'name', title: m.common_name(), sortable: true, cell: NameCell },
 				{
@@ -223,13 +193,6 @@
 				{ accessorKey: 'path', title: m.common_working_directory(), sortable: true, cell: DirectoryCell },
 				{ accessorKey: 'gitOpsManagedBy', title: m.projects_col_provider(), cell: ProviderCell },
 				{ accessorKey: 'status', title: m.common_status(), sortable: true, cell: StatusCell },
-				{
-					id: 'updates',
-					accessorFn: (row) => getProjectUpdateStatus(row.updateInfo),
-					title: m.updates(),
-					sortable: false,
-					cell: UpdatesCell
-				},
 				{ accessorKey: 'createdAt', title: m.common_created(), sortable: true, cell: CreatedCell },
 				{ accessorKey: 'serviceCount', title: m.services(), sortable: true },
 				{ id: 'label', accessorFn: () => '', title: m.common_labels(), hidden: true }
@@ -242,7 +205,6 @@
 		{ id: 'provider', label: m.projects_col_provider(), defaultVisible: true },
 		{ id: 'status', label: m.common_status(), defaultVisible: true },
 		{ id: 'tags', label: m.common_tags(), defaultVisible: true },
-		{ id: 'updates', label: m.updates(), defaultVisible: true },
 		{ id: 'serviceCount', label: m.services(), defaultVisible: true },
 		{ id: 'createdAt', label: m.common_created(), defaultVisible: true }
 	];
@@ -420,17 +382,6 @@
 	{/if}
 {/snippet}
 
-{#snippet UpdatesCell({ item }: { item: ProjectRow })}
-	<ProjectUpdateItem
-		updateInfo={item.updateInfo}
-		environmentId={item.environmentId}
-		onCheck={() => handleCheckProjectUpdates(item)}
-		checking={!!checkingProjectIds[rowKey(item)]}
-		disabled={!!item.isArchived || !!item.configurationError?.blocksOperations}
-		class="mr-2"
-	/>
-{/snippet}
-
 {#snippet CreatedCell({ value }: { value: unknown })}
 	{#if value}{formatDateTimeShort(String(value))}{/if}
 {/snippet}
@@ -466,14 +417,6 @@
 					? {
 							variant: 'gray' as const,
 							text: m.projects_archived_badge()
-						}
-					: null,
-			(item: ProjectRow) =>
-				(mobileFieldVisibility['updates'] ?? true)
-					? {
-							variant: getProjectUpdateVariant(item.updateInfo),
-							text: getProjectUpdateText(item.updateInfo),
-							tooltip: getProjectUpdateTooltip(item.updateInfo)
 						}
 					: null
 		]}
@@ -673,7 +616,7 @@
 
 <ArcaneTable
 	{emptyState}
-	persistKey="arcane-project-table"
+	{persistKey}
 	items={projects}
 	bind:requestOptions
 	bind:selectedIds

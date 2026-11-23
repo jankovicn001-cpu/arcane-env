@@ -26,7 +26,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/activity"
 	"getarcane.dev/arcane/v3/internal/database"
 	dockerInternal "getarcane.dev/arcane/v3/internal/docker"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/network"
 	"getarcane.dev/arcane/v3/internal/scheduler/jobcontext"
 	"getarcane.dev/arcane/v3/internal/volume"
@@ -40,23 +39,21 @@ import (
 
 type (
 	Service struct {
-		location           *time.Location
-		dockerService      *dockerInternal.DockerClientService
-		activityService    *activity.ActivityService
-		imageUpdateService *imageupdate.ImageUpdateService
-		volumeService      *volume.VolumeService
-		networkService     *network.NetworkService
-		runningPrunes      map[string]string
-		pruneMu            sync.Mutex
+		location        *time.Location
+		dockerService   *dockerInternal.DockerClientService
+		activityService *activity.ActivityService
+		volumeService   *volume.VolumeService
+		networkService  *network.NetworkService
+		runningPrunes   map[string]string
+		pruneMu         sync.Mutex
 	}
 
 	ServiceParams struct {
-		Location           *time.Location
-		DockerService      *dockerInternal.DockerClientService
-		ActivityService    *activity.ActivityService
-		ImageUpdateService *imageupdate.ImageUpdateService
-		VolumeService      *volume.VolumeService
-		NetworkService     *network.NetworkService
+		Location        *time.Location
+		DockerService   *dockerInternal.DockerClientService
+		ActivityService *activity.ActivityService
+		VolumeService   *volume.VolumeService
+		NetworkService  *network.NetworkService
 	}
 
 	systemPruneBeginResult struct {
@@ -81,13 +78,12 @@ var errDiskUsageUnavailable = errors.New("docker disk usage unavailable")
 
 func NewService(p ServiceParams) *Service {
 	return &Service{
-		location:           p.Location,
-		dockerService:      p.DockerService,
-		activityService:    p.ActivityService,
-		imageUpdateService: p.ImageUpdateService,
-		volumeService:      p.VolumeService,
-		networkService:     p.NetworkService,
-		runningPrunes:      make(map[string]string),
+		location:        p.Location,
+		dockerService:   p.DockerService,
+		activityService: p.ActivityService,
+		volumeService:   p.VolumeService,
+		networkService:  p.NetworkService,
+		runningPrunes:   make(map[string]string),
 	}
 }
 
@@ -420,21 +416,13 @@ func (s *Service) pruneImages(ctx context.Context, options types.PruneImagesOpti
 		return types.PruneAllResult{}, fmt.Errorf("failed to prune images: %w", err)
 	}
 
-	var deletedImageIDs, untaggedRefs []string
+	var deletedImageIDs []string
 	for _, imgReport := range report.Report.ImagesDeleted {
-		_, isImage := existingIDs[imgReport.Deleted]
-		switch {
-		case imgReport.Deleted != "" && (isImage || listErr != nil):
+		if _, isImage := existingIDs[imgReport.Deleted]; imgReport.Deleted != "" && (isImage || listErr != nil) {
 			deletedImageIDs = append(deletedImageIDs, imgReport.Deleted)
-		case imgReport.Untagged != "":
-			untaggedRefs = append(untaggedRefs, imgReport.Untagged)
 		}
 	}
 	slog.InfoContext(ctx, "Image pruning completed", "imagesDeleted", len(deletedImageIDs), "bytesReclaimed", report.Report.SpaceReclaimed)
-
-	if deleteRecordsForImagesErr := s.imageUpdateService.DeleteRecordsForImages(ctx, slices.Concat(deletedImageIDs, untaggedRefs)); deleteRecordsForImagesErr != nil {
-		slog.WarnContext(ctx, "Failed to delete image update records", "count", len(deletedImageIDs)+len(untaggedRefs), "error", deleteRecordsForImagesErr.Error())
-	}
 
 	return types.PruneAllResult{
 		ImagesDeleted:       deletedImageIDs,
@@ -979,11 +967,6 @@ func (s *Service) executePrunePlan(
 			Message: kit.Ternary(removeFailed, fmt.Sprint(removeErr), ""),
 		}); targetProgressErr != nil {
 			return finish(targetProgressErr)
-		}
-	}
-	if len(imagesDeleted) > 0 {
-		if deleteRecordsForImagesErr := s.imageUpdateService.DeleteRecordsForImages(ctx, imagesDeleted); deleteRecordsForImagesErr != nil {
-			return finish(deleteRecordsForImagesErr)
 		}
 	}
 	reclaimed, err := s.executePruneCache(ctx, plan, recovery)

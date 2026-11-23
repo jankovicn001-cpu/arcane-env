@@ -427,7 +427,7 @@ func TestRenderGenericPayloadTemplate_EscapesJSON(t *testing.T) {
 	config := GenericConfig{
 		PayloadTemplate: `{"text": "{{.title}}: {{.message}}", "env": "{{.environment}}", "event": "{{.event}}"}`,
 	}
-	vars := map[string]string{"environment": "Local Docker", "environmentId": "0", "event": "image_update", "timestamp": "2026-07-28T00:00:00Z"}
+	vars := map[string]string{"environment": "Local Docker", "environmentId": "0", "event": "vulnerability_found", "timestamp": "2026-07-28T00:00:00Z"}
 
 	body, err := RenderGenericPayloadTemplate(config, "Image \"Update\"", "he said \"stop\"\nnew line \\ end", vars)
 	require.NoError(t, err)
@@ -436,7 +436,7 @@ func TestRenderGenericPayloadTemplate_EscapesJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &decoded), "rendered body must be valid JSON: %s", body)
 	assert.Equal(t, "Image \"Update\": he said \"stop\"\nnew line \\ end", decoded["text"])
 	assert.Equal(t, "Local Docker", decoded["env"])
-	assert.Equal(t, "image_update", decoded["event"])
+	assert.Equal(t, "vulnerability_found", decoded["event"])
 }
 
 func TestSendGenericWithTitle_PayloadTemplate(t *testing.T) {
@@ -457,7 +457,7 @@ func TestSendGenericWithTitle_PayloadTemplate(t *testing.T) {
 		PayloadTemplate: `{"text": "{{.title}}\n{{.message}} ({{.environment}})"}`,
 		CustomHeaders:   map[string]string{"Authorization": "Bearer t0ken"},
 	}
-	vars := map[string]string{"environment": "Local Docker", "environmentId": "0", "event": "image_update", "timestamp": "2026-07-28T00:00:00Z"}
+	vars := map[string]string{"environment": "Local Docker", "environmentId": "0", "event": "vulnerability_found", "timestamp": "2026-07-28T00:00:00Z"}
 
 	require.NoError(t, SendGenericWithTitle(t.Context(), config, "Image Update", "nginx:latest updated", vars))
 

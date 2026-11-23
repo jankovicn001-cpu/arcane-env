@@ -59,6 +59,16 @@ func setupAuthServiceTestDB(t *testing.T) *database.DB {
 		&role.ApiKeyPermission{},
 		&role.OidcRoleMapping{},
 	))
+	// User group tables belong to a role child package; permission resolution only needs them to exist.
+	for _, ddl := range []string{
+		"CREATE TABLE IF NOT EXISTS user_groups (id text PRIMARY KEY, name text)",
+		"CREATE TABLE IF NOT EXISTS user_group_links (id text PRIMARY KEY, user_group_id text, kind text, value text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_members (id text PRIMARY KEY, user_group_id text, user_id text, source text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_role_assignments " +
+			"(id text PRIMARY KEY, user_group_id text, role_id text, environment_id text, environment_group_id text, created_at datetime, updated_at datetime)",
+	} {
+		require.NoError(t, db.Exec(ddl).Error)
+	}
 	return &database.DB{DB: db}
 }
 
@@ -82,7 +92,6 @@ func newBootstrapTestVersionService(t *testing.T, db *database.DB) *version.Vers
 	t.Helper()
 	versionSettings, err := newSettingsServiceForAuthTest(t, t.Context(), db)
 	require.NoError(t, err)
-	require.NoError(t, versionSettings.SetBoolSetting(t.Context(), "updateCheckEnabled", false))
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
 	dockerClient, err := client.New(
@@ -94,10 +103,9 @@ func newBootstrapTestVersionService(t *testing.T, db *database.DB) *version.Vers
 		_ = dockerClient.Close()
 	})
 	return version.NewVersionService(version.VersionServiceParams{
-		AppVersion:      "1.2.3",
-		Revision:        "revision",
-		DockerService:   docker.NewDockerClientService(t.Context(), nil, versionSettings, bus.Config{}).WithClient(dockerClient),
-		SettingsService: versionSettings,
+		AppVersion:    "1.2.3",
+		Revision:      "revision",
+		DockerService: docker.NewDockerClientService(t.Context(), nil, versionSettings, bus.Config{}).WithClient(dockerClient),
 	})
 }
 
@@ -1282,4 +1290,35 @@ func TestVerifyToken_RejectsDisabledUser(t *testing.T) {
 
 	_, err = s.RefreshToken(t.Context(), makeRefreshToken(t, s.signingKey, refreshJTI, exp, "u-off", localSession.ID), types.SessionMeta{})
 	require.ErrorIs(t, err, common.ErrInvalidToken)
+}
+
+func TestSyncOidcRoleAssignmentsReplacesUserGroupMemberships(t *testing.T) {
+	ctx := t.Context()
+	db := setupAuthServiceTestDB(t)
+	settingsSvc, err := newSettingsServiceForAuthTest(t, ctx, db)
+	require.NoError(t, err)
+	roleSvc := role.NewRoleService(db)
+	require.NoError(t, roleSvc.EnsureBuiltInRoles(ctx))
+	authSvc := newTestAuthService()
+	authSvc.settingsService = settingsSvc
+	authSvc.roleService = roleSvc
+	member := &user.User{ID: "member", Username: "member"}
+	require.NoError(t, db.Create(member).Error)
+	require.NoError(t, db.Exec(`INSERT INTO user_groups (id, name) VALUES ('ops', 'Ops'), ('ldap-only', 'LDAP only')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO user_group_links (id, user_group_id, kind, value) VALUES ('l1', 'ops', 'oidc', 'ops'), ('l2', 'ldap-only', 'ldap', 'ops')`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO user_group_role_assignments (id, user_group_id, role_id) VALUES ('g1', 'ops', ?)`, authz.BuiltInRoleViewer).Error)
+	sync := func(groups ...string) *authz.PermissionSet {
+		t.Helper()
+		require.NoError(t, authSvc.syncOidcRoleAssignments(ctx, member, types.OidcUserInfo{Subject: "sub", Groups: groups}, nil))
+		ps, resolveErr := roleSvc.ResolvePermissions(ctx, member.ID)
+		require.NoError(t, resolveErr)
+		return ps
+	}
+
+	require.False(t, sync().Allows(authz.PermContainersList, ""))
+	require.True(t, sync("ops").Allows(authz.PermContainersList, ""), "a matching claim joins the group and invalidates cached permissions")
+	refs, err := roleSvc.UserGroupRefs(ctx, member.ID)
+	require.NoError(t, err)
+	require.Equal(t, []types.UserGroupRef{{ID: "ops", Name: "Ops"}}, refs, "only oidc links match SSO claims")
+	require.False(t, sync("other").Allows(authz.PermContainersList, ""), "losing the claim removes the membership at the next login")
 }

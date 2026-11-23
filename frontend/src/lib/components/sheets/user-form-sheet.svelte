@@ -11,16 +11,16 @@
 	import * as ResponsiveDialog from '#lib/components/ui/responsive-dialog/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import settingsStore from '#lib/stores/config-store.svelte.js';
-	import type { Environment } from '#lib/types/environment.js';
-	import type { Role } from '#lib/types/role.js';
+	import type { Environment, EnvironmentGroupRef } from '#lib/types/environment.js';
+	import type { Role, UserRoleAssignmentInput } from '#lib/types/role.js';
 	import type { UserUpdate } from '#lib/types/ui/user.js';
 	import type { User } from '#lib/types/user.js';
+	import { roleScopeLabel, roleScopeOptionId } from '#lib/utils/options.js';
 	import { changedFields } from '#lib/utils/payload.js';
 	import { createForm, preventDefault } from '#lib/utils/settings.svelte.js';
 
-	type RoleAssignmentInput = { roleId: string; environmentId?: string };
 	type UserSubmission = UserUpdate & {
-		roleAssignments?: RoleAssignmentInput[];
+		roleAssignments?: UserRoleAssignmentInput[];
 	};
 	type UserFormSubmission = { user: UserSubmission; isEditMode: boolean; userId?: string };
 
@@ -29,7 +29,8 @@
 		userToEdit: User | null;
 		roles: Role[];
 		environments: Environment[];
-		availableRoleAssignments?: RoleAssignmentInput[];
+		groups: EnvironmentGroupRef[];
+		availableRoleAssignments?: UserRoleAssignmentInput[];
 		onSubmit: (data: UserFormSubmission) => Promise<boolean>;
 		isLoading: boolean;
 		allowUsernameEdit?: boolean;
@@ -40,6 +41,7 @@
 		userToEdit,
 		roles,
 		environments,
+		groups,
 		availableRoleAssignments = [],
 		onSubmit,
 		isLoading,
@@ -98,7 +100,8 @@
 			.array(
 				z.object({
 					roleId: z.string().min(1),
-					environmentId: z.string().optional()
+					environmentId: z.string().optional(),
+					environmentGroupId: z.string().optional()
 				})
 			)
 			.refine((assignments) => isExternallyManaged || assignments.length >= 1, m.users_role_assignments_required())
@@ -236,17 +239,17 @@
 							>
 						</p>
 						<div class="mt-2 flex flex-wrap gap-2">
-							{#each oidcAssignments as assignment (`${assignment.source}-${assignment.roleId}-${assignment.environmentId ?? 'global'}`)}
+							{#each oidcAssignments as assignment (`${assignment.source}-${assignment.roleId}-${roleScopeOptionId(assignment)}`)}
 								<Badge variant="outline">
 									{roles.find((r) => r.id === assignment.roleId)?.name ?? assignment.roleId}
 									·
-									{environments.find((e) => e.id === assignment.environmentId)?.name ?? m.global_org_wide()}
+									{roleScopeLabel(assignment, environments, groups)}
 								</Badge>
 							{/each}
 						</div>
 					</div>
 				{/if}
-				<RoleAssignmentsEditor bind:assignments={form.inputs.roleAssignments.value} {roles} {environments} />
+				<RoleAssignmentsEditor bind:assignments={form.inputs.roleAssignments.value} {roles} {environments} {groups} />
 				{#if form.inputs.roleAssignments.error}
 					<p class="mt-1 text-xs text-destructive">{form.inputs.roleAssignments.error}</p>
 				{/if}

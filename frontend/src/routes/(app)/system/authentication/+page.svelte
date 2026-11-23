@@ -360,7 +360,12 @@
 				{#if isAutoLoginEnabled}
 					{@render autoLoginAlert()}
 				{:else}
-					<RoleMappingsTab initialMappings={data.oidcMappings} roles={data.roles} environments={data.environments} />
+					<RoleMappingsTab
+						initialMappings={data.oidcMappings}
+						roles={data.roles}
+						environments={data.environments}
+						groups={data.environmentGroups}
+					/>
 				{/if}
 			</Tabs.Content>
 

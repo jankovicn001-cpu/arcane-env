@@ -14,23 +14,26 @@
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { oidcMappingService } from '#lib/services/oidc-mapping-service.js';
 	import type { Paginated } from '#lib/types/base.js';
-	import type { Environment } from '#lib/types/environment.js';
+	import type { Environment, EnvironmentGroupRef } from '#lib/types/environment.js';
 	import type { OidcRoleMapping, Role } from '#lib/types/role.js';
 	import { BUILT_IN_ROLE_ADMIN, BUILT_IN_ROLE_EDITOR, BUILT_IN_ROLE_DEPLOYER, BUILT_IN_ROLE_VIEWER } from '#lib/types/role.js';
 	import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 	import { handleApiResultWithCallbacks } from '#lib/utils/api.js';
+	import { roleScopeLabel } from '#lib/utils/options.js';
 	import { tryCatch } from '#lib/utils/try-catch.js';
 
 	let {
 		mappings,
 		roles,
 		environments,
+		groups,
 		onRetry,
 		onEdit
 	}: {
 		mappings: OidcRoleMapping[];
 		roles: Role[];
 		environments: Environment[];
+		groups: EnvironmentGroupRef[];
 		onRetry: () => Promise<unknown>;
 		onEdit: (mapping: OidcRoleMapping) => void;
 	} = $props();
@@ -47,12 +50,6 @@
 	const rolesById = $derived.by(() => {
 		const lookup: Record<string, Role> = {};
 		for (const role of roles) lookup[role.id] = role;
-		return lookup;
-	});
-
-	const envsById = $derived.by(() => {
-		const lookup: Record<string, Environment> = {};
-		for (const env of environments) lookup[env.id] = env;
 		return lookup;
 	});
 
@@ -80,11 +77,6 @@
 
 	function getRoleName(roleId: string): string {
 		return rolesById[roleId]?.name ?? roleId;
-	}
-
-	function getEnvName(environmentId: string | null | undefined): string {
-		if (!environmentId) return m.global_org_wide();
-		return envsById[environmentId]?.name ?? environmentId;
 	}
 
 	// ArcaneTable expects Paginated<T>; this list is unpaginated so we synthesize it.
@@ -141,7 +133,7 @@
 		{
 			id: 'environmentId',
 			accessorKey: 'environmentId',
-			title: m.resource_environment_cap(),
+			title: m.common_scope(),
 			sortable: true,
 			cell: ScopeCell
 		}
@@ -149,7 +141,7 @@
 
 	const mobileFields = [
 		{ id: 'roleId', label: m.common_role(), defaultVisible: true },
-		{ id: 'environmentId', label: m.resource_environment_cap(), defaultVisible: true }
+		{ id: 'environmentId', label: m.common_scope(), defaultVisible: true }
 	];
 
 	let mobileFieldVisibility = $state<Record<string, boolean>>({});
@@ -170,7 +162,9 @@
 {/snippet}
 
 {#snippet ScopeCell({ item }: { item: OidcRoleMapping })}
-	<span class={item.environmentId ? '' : 'text-muted-foreground italic'}>{getEnvName(item.environmentId)}</span>
+	<span class={item.environmentId || item.environmentGroupId ? '' : 'text-muted-foreground italic'}>
+		{roleScopeLabel(item, environments, groups)}
+	</span>
 {/snippet}
 
 {#snippet OidcMappingMobileCardSnippet({
@@ -194,8 +188,8 @@
 		]}
 		fields={[
 			{
-				label: m.resource_environment_cap(),
-				getValue: (item: OidcRoleMapping) => getEnvName(item.environmentId),
+				label: m.common_scope(),
+				getValue: (item: OidcRoleMapping) => roleScopeLabel(item, environments, groups),
 				icon: ShieldAlertIcon,
 				iconVariant: 'gray' as const,
 				show: mobileFieldVisibility['environmentId'] ?? true

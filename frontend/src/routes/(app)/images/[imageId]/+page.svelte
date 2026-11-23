@@ -9,8 +9,6 @@
 	import type { ActionButton } from '#lib/components/action-button-group/types.js';
 	import { ArcaneButton } from '#lib/components/arcane-button/index.js';
 	import { openConfirmDialog } from '#lib/components/confirm-dialog/index.js';
-	import ImageReleaseNotesDialog from '#lib/components/dialogs/image-release-notes-dialog.svelte';
-	import ImageUpdateItem from '#lib/components/image-update-item.svelte';
 	import { DetailMetaStrip, DetailSection, KeyValueCard } from '#lib/components/resource-detail/index.js';
 	import { TabBar } from '#lib/components/tab-bar/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -26,8 +24,7 @@
 		ImagesIcon,
 		LayersIcon,
 		ShieldCheckIcon,
-		InspectIcon,
-		FileTextIcon
+		InspectIcon
 	} from '#lib/icons/index.js';
 	import { ResourceDetailLayout } from '#lib/layouts/index.js';
 	import { m } from '#lib/paraglide/messages.js';
@@ -84,7 +81,6 @@
 	const canTagImage = $derived(hasPermission('images:tag', currentEnvId));
 	const canPullImage = $derived(hasPermission('images:pull', currentEnvId));
 	const canReadImage = $derived(hasPermission('images:read', currentEnvId));
-	const canReadReleaseNotes = $derived(hasPermission('image-updates:read', currentEnvId));
 
 	const isLoading = $state({
 		pulling: false,
@@ -93,7 +89,6 @@
 		patching: false
 	});
 	let tagDialogOpen = $state(false);
-	let releaseNotesOpen = $state(false);
 
 	let scanRequest = $state<{ scope: string; time: string } | null>(null);
 	let completionToastScope = $state<string | null>(null);
@@ -336,16 +331,6 @@
 				onclick: handlePatchImage
 			});
 		}
-		if (canReadReleaseNotes && hasTags) {
-			list.push({
-				id: 'release-notes',
-				action: 'base',
-				placement: 'secondary',
-				label: m.image_update_release_notes_button(),
-				icon: FileTextIcon,
-				onclick: () => (releaseNotesOpen = true)
-			});
-		}
 		if (canDeleteImage) {
 			list.push({
 				id: 'remove',
@@ -382,20 +367,7 @@
 								{ icon: ClockIcon, value: createdDate },
 								{ icon: CpuIcon, value: `${architecture} · ${osName}` }
 							]}
-						>
-							{#if hasTags}
-								<ImageUpdateItem
-									updateInfo={image.updateInfo}
-									imageId={image.id}
-									environmentId={currentEnvId}
-									repo={image.repo}
-									tag={image.tag}
-									isLocal={(image.repoDigests?.length ?? 0) === 0}
-									onUpdated={() =>
-										queryClient.invalidateQueries({ queryKey: queryKeys.images.detail(currentEnvId, data.imageId) })}
-								/>
-							{/if}
-						</DetailMetaStrip>
+						/>
 
 						{#if hasPinnedRefs}
 							<div class="space-y-2">
@@ -504,8 +476,4 @@
 		defaultRepository={image.repoTags?.[0]?.split(':')[0] ?? (pinnedRepository || '')}
 		onTagged={() => queryClient.invalidateQueries({ queryKey: queryKeys.images.detail(currentEnvId, data.imageId) })}
 	/>
-{/if}
-
-{#if image && hasTags && releaseNotesOpen}
-	<ImageReleaseNotesDialog bind:open={releaseNotesOpen} environmentId={currentEnvId} imageRef={detailTitle} />
 {/if}

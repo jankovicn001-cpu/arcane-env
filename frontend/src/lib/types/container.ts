@@ -1,6 +1,6 @@
 import type { PaginatedWithCounts } from './base';
 import type { ContainerRegistryCredential } from './containerregistry';
-import type { HardenedImageInfo, ImageUpdateInfo } from './image';
+import type { HardenedImageInfo } from './image';
 
 export interface ContainerRestartPolicyCreate {
 	name?: 'no' | 'always' | 'on-failure' | 'unless-stopped';
@@ -109,7 +109,6 @@ export interface ContainerStatusCounts {
 	stoppedContainers: number;
 	totalContainers: number;
 	unhealthyContainers: number;
-	updatesAvailable: number;
 }
 
 export interface ContainerPort {
@@ -235,15 +234,11 @@ export interface ContainerSummary {
 	status: string;
 	iconLightUrl?: string;
 	iconDarkUrl?: string;
-	updateStrategy?: string;
 	ports: ContainerPort[];
 	hostConfig: ContainerHostConfig;
 	networkSettings: ContainerNetworkSettings;
 	mounts: ContainerMount[];
-	updateInfo?: ImageUpdateInfo;
 	redeployDisabled?: boolean;
-	/** Eligibility under the updater label and exclusion setting; absent on older agents. */
-	autoUpdateEnabled?: boolean;
 	hidden?: boolean;
 	resourceSample?: ContainerResourceSample;
 }
@@ -277,10 +272,6 @@ export interface ContainerDetails {
 	iconLightUrl?: string;
 	iconDarkUrl?: string;
 	redeployDisabled?: boolean;
-	/** Eligibility under the updater label and exclusion setting; absent on older agents. */
-	autoUpdateEnabled?: boolean;
-	/** Stored update check for the container's current policy; absent on older agents. */
-	updateInfo?: ImageUpdateInfo;
 	/** Docker Hardened Image metadata from the image labels; absent on older agents. */
 	hardened?: HardenedImageInfo;
 }

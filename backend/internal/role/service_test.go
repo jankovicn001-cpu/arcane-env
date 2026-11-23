@@ -2,6 +2,7 @@ package role_test
 
 import (
 	"encoding/hex"
+	"errors"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -11,23 +12,33 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"kit.getarcane.app"
+
 	"getarcane.dev/arcane/v3/internal/common"
 	"getarcane.dev/arcane/v3/internal/database"
 	"getarcane.dev/arcane/v3/internal/role"
+	"getarcane.dev/arcane/v3/internal/role/children/usergroup"
 	"getarcane.dev/arcane/v3/internal/session"
 	"getarcane.dev/arcane/v3/internal/settings"
 	"getarcane.dev/arcane/v3/internal/user"
 	"getarcane.dev/arcane/v3/pkg/authz"
+	"getarcane.dev/types/v3"
 )
 
 type (
 	testEnvironmentRow struct {
 		database.BaseModel
 		AccessToken *string `gorm:"column:access_token"`
+		GroupID     *string `gorm:"column:group_id"`
 		Name        string
 		ApiUrl      string `gorm:"column:api_url"`
 		Status      string
 		Enabled     bool
+	}
+
+	testEnvironmentGroupRow struct {
+		ID   string `gorm:"primaryKey"`
+		Name string
 	}
 
 	testApiKeyRow struct {
@@ -296,7 +307,7 @@ func TestEffectiveGlobalAdminCountIgnoresEnvScopedAndServiceAccounts(t *testing.
 	customRole, err := roleSvc.CreateRole(ctx, "Custom Admin", nil, authz.AllPermissions())
 	require.NoError(t, err)
 	envID := "env-1"
-	createTestEnvironment(t, userSvc, envID, "http://localhost:3552", nil)
+	createTestEnvironment(t, userSvc, envID, "http://localhost:3552")
 
 	globalAdmin := createTestUser(t, userSvc, "global-admin", "global-admin")
 	envScopedAdmin := createTestUser(t, userSvc, "env-scoped-admin", "env-scoped-admin")
@@ -331,11 +342,16 @@ func setupAuthServiceTestDB(t *testing.T) *database.DB {
 		&user.User{},
 		&session.UserSession{},
 		&testEnvironmentRow{},
+		&testEnvironmentGroupRow{},
 		&role.Role{},
 		&role.UserRoleAssignment{},
 		&testApiKeyRow{},
 		&role.ApiKeyPermission{},
 		&role.OidcRoleMapping{},
+		&usergroup.Group{},
+		&usergroup.Link{},
+		&usergroup.Member{},
+		&usergroup.Grant{},
 	))
 	return &database.DB{DB: db}
 }
@@ -362,22 +378,38 @@ func grantGlobalAdmin(t *testing.T, roleService *role.RoleService, userID string
 	}))
 }
 
-func createTestEnvironment(t *testing.T, db *database.DB, id, apiURL string, accessToken *string) {
+func createTestEnvironment(t *testing.T, db *database.DB, id, apiURL string) {
 	t.Helper()
 	now := time.Now()
 	require.NoError(t, db.WithContext(t.Context()).Create(&testEnvironmentRow{
 		ID: id, CreatedAt: now, UpdatedAt: &now,
-		Name:        "env-" + id,
-		ApiUrl:      apiURL,
-		Status:      "online",
-		Enabled:     true,
-		AccessToken: accessToken,
+		Name:    "env-" + id,
+		ApiUrl:  apiURL,
+		Status:  "online",
+		Enabled: true,
 	}).Error)
 }
 
 func (testEnvironmentRow) TableName() string { return "environments" }
 
 func (testApiKeyRow) TableName() string { return "api_keys" }
+
+func (testEnvironmentGroupRow) TableName() string { return "environment_groups" }
+
+// createTestGroup creates an environment group holding the given agents.
+func createTestGroup(t *testing.T, db *database.DB, groupID string, agentIDs ...string) {
+	t.Helper()
+	require.NoError(t, db.Create(&testEnvironmentGroupRow{ID: groupID, Name: "group-" + groupID}).Error)
+	for _, agentID := range agentIDs {
+		createTestEnvironment(t, db, agentID, "agent://"+agentID)
+		moveTestAgent(t, db, agentID, &groupID)
+	}
+}
+
+func moveTestAgent(t *testing.T, db *database.DB, agentID string, groupID *string) {
+	t.Helper()
+	require.NoError(t, db.Model(&testEnvironmentRow{}).Where("id = ?", agentID).Update("group_id", groupID).Error)
+}
 
 func TestResolveExecutionPermissions(t *testing.T) {
 	t.Run("personal keys use current user permissions and explicit scope", func(t *testing.T) {
@@ -496,4 +528,296 @@ func TestPermissionsManifestETagIsStableHex(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, decoded, 8)
 	require.Equal(t, etag, role.PermissionsManifestETag())
+}
+
+func TestResolvePermissionsExpandsEnvironmentGroupGrants(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	grantGlobalAdmin(t, roleSvc, createTestUser(t, db, "root", "root").ID)
+	member := createTestUser(t, db, "member", "member")
+	createTestGroup(t, db, "prod", "web", "api")
+	createTestEnvironment(t, db, "loose", "agent://loose")
+	require.NoError(t, roleSvc.ReplaceUserAssignments(ctx, member.ID, role.RoleAssignmentSourceManual, []role.UserRoleAssignment{
+		{RoleID: authz.BuiltInRoleViewer, EnvironmentGroupID: new("prod")},
+	}))
+
+	ps, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.True(t, ps.Allows(authz.PermContainersList, "web"))
+	require.True(t, ps.Allows(authz.PermContainersList, "api"))
+	require.False(t, ps.Allows(authz.PermContainersList, "loose"))
+	require.False(t, ps.Allows(authz.PermContainersList, ""), "a group grant never applies globally")
+	require.Empty(t, ps.Global)
+
+	moveTestAgent(t, db, "loose", new("prod"))
+	moveTestAgent(t, db, "web", nil)
+	cached, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.True(t, cached.Allows(authz.PermContainersList, "web"), "membership changes stay cached until invalidated")
+
+	roleSvc.InvalidateAllUsers()
+	ps, err = roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.True(t, ps.Allows(authz.PermContainersList, "loose"), "an agent joining the group gains the grant")
+	require.False(t, ps.Allows(authz.PermContainersList, "web"), "an agent leaving the group loses the grant")
+	require.True(t, ps.Allows(authz.PermContainersList, "api"))
+}
+
+func TestResolvePermissionsIgnoresEmptyAndDeletedGroups(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	grantGlobalAdmin(t, roleSvc, createTestUser(t, db, "root", "root").ID)
+	member := createTestUser(t, db, "member", "member")
+	createTestGroup(t, db, "empty")
+	createTestGroup(t, db, "doomed", "web")
+	require.NoError(t, roleSvc.ReplaceUserAssignments(ctx, member.ID, role.RoleAssignmentSourceManual, []role.UserRoleAssignment{
+		{RoleID: authz.BuiltInRoleAdmin, EnvironmentGroupID: new("empty")},
+		{RoleID: authz.BuiltInRoleAdmin, EnvironmentGroupID: new("doomed")},
+	}))
+
+	// Simulate a deletion that left the assignment rows behind, as SQLite without foreign keys would.
+	moveTestAgent(t, db, "web", nil)
+	require.NoError(t, db.Delete(&testEnvironmentGroupRow{}, "id IN ?", []string{"empty", "doomed"}).Error)
+	roleSvc.InvalidateAllUsers()
+
+	ps, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.Empty(t, ps.Global)
+	require.Empty(t, ps.PerEnv)
+	require.False(t, ps.IsGlobalAdmin())
+}
+
+func TestGroupScopedAdminIsNotGlobalAdmin(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	globalAdmin := createTestUser(t, db, "global-admin", "global-admin")
+	groupAdmin := createTestUser(t, db, "group-admin", "group-admin")
+	createTestGroup(t, db, "prod", "web")
+	grantGlobalAdmin(t, roleSvc, globalAdmin.ID)
+	require.NoError(t, roleSvc.ReplaceUserAssignments(ctx, groupAdmin.ID, role.RoleAssignmentSourceManual, []role.UserRoleAssignment{
+		{RoleID: authz.BuiltInRoleAdmin, EnvironmentGroupID: new("prod")},
+	}))
+
+	count, err := roleSvc.CountGlobalAdmins(ctx, db.DB, "")
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	err = roleSvc.ReplaceUserAssignments(ctx, globalAdmin.ID, role.RoleAssignmentSourceManual, []role.UserRoleAssignment{
+		{RoleID: authz.BuiltInRoleAdmin, EnvironmentGroupID: new("prod")},
+	})
+	require.ErrorIs(t, err, common.ErrNoGlobalAdminRemains, "narrowing the last admin to a group is still a demotion")
+}
+
+func TestRoleScopesAreMutuallyExclusiveAndValidated(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	grantGlobalAdmin(t, roleSvc, createTestUser(t, db, "root", "root").ID)
+	member := createTestUser(t, db, "member", "member")
+	createTestGroup(t, db, "prod", "web")
+	requireGroupFieldError := func(err error) {
+		t.Helper()
+		require.ErrorIs(t, err, common.ErrInvalidRoleAssignment)
+		fieldErr, ok := errors.AsType[*types.FieldError](err)
+		require.True(t, ok, "expected a field error, got %v", err)
+		require.Equal(t, "environmentGroupId", fieldErr.Field)
+	}
+
+	requireGroupFieldError(roleSvc.ReplaceUserAssignments(ctx, member.ID, role.RoleAssignmentSourceManual, []role.UserRoleAssignment{
+		{RoleID: authz.BuiltInRoleViewer, EnvironmentID: new("web"), EnvironmentGroupID: new("prod")},
+	}))
+	requireGroupFieldError(roleSvc.ReplaceUserAssignments(ctx, member.ID, role.RoleAssignmentSourceManual, []role.UserRoleAssignment{
+		{RoleID: authz.BuiltInRoleViewer, EnvironmentGroupID: new("missing")},
+	}))
+	_, err := roleSvc.CreateOidcMapping(ctx, types.OidcRoleMappingSpec{
+		ClaimValue: "devs", RoleID: authz.BuiltInRoleViewer, EnvironmentID: new("web"), EnvironmentGroupID: new("prod"),
+	})
+	requireGroupFieldError(err)
+	_, err = roleSvc.CreateOidcMapping(ctx, types.OidcRoleMappingSpec{ClaimValue: "devs", RoleID: authz.BuiltInRoleViewer, EnvironmentGroupID: new("missing")})
+	requireGroupFieldError(err)
+
+	mapping, err := roleSvc.CreateOidcMapping(ctx, types.OidcRoleMappingSpec{ClaimValue: "devs", RoleID: authz.BuiltInRoleViewer, EnvironmentGroupID: new("prod")})
+	require.NoError(t, err)
+	require.Equal(t, "prod", *mapping.EnvironmentGroupID)
+	_, err = roleSvc.UpdateOidcMapping(ctx, mapping.ID, types.OidcRoleMappingSpec{
+		ClaimValue: "devs", RoleID: authz.BuiltInRoleViewer, EnvironmentID: new("web"), EnvironmentGroupID: new("prod"),
+	})
+	requireGroupFieldError(err)
+	updated, err := roleSvc.UpdateOidcMapping(ctx, mapping.ID, types.OidcRoleMappingSpec{ClaimValue: "devs", RoleID: authz.BuiltInRoleViewer, EnvironmentID: new("web")})
+	require.NoError(t, err)
+	require.Nil(t, updated.EnvironmentGroupID, "switching to an agent scope clears the group scope")
+
+	require.NoError(t, roleSvc.ReplaceUserAssignments(ctx, member.ID, role.RoleAssignmentSourceManual, []role.UserRoleAssignment{
+		{RoleID: authz.BuiltInRoleViewer},
+		{RoleID: authz.BuiltInRoleViewer, EnvironmentGroupID: new("prod")},
+		{RoleID: authz.BuiltInRoleViewer, EnvironmentGroupID: new("prod")},
+	}))
+	rows, err := roleSvc.ListUserAssignments(ctx, member.ID)
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "duplicates collapse while a group grant sits beside the same global grant")
+}
+
+func TestOidcSyncCopiesGroupScope(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	grantGlobalAdmin(t, roleSvc, createTestUser(t, db, "root", "root").ID)
+	member := createTestUser(t, db, "member", "member")
+	createTestGroup(t, db, "prod", "web")
+	_, err := roleSvc.CreateOidcMapping(ctx, types.OidcRoleMappingSpec{ClaimValue: "prod-ops", RoleID: authz.BuiltInRoleDeployer, EnvironmentGroupID: new("prod")})
+	require.NoError(t, err)
+	_, err = roleSvc.CreateOidcMapping(ctx, types.OidcRoleMappingSpec{ClaimValue: "everyone", RoleID: authz.BuiltInRoleViewer})
+	require.NoError(t, err)
+	mappings, err := roleSvc.ListOidcMappings(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, roleSvc.ReplaceUserAssignments(ctx, member.ID, role.RoleAssignmentSourceOidc, role.MappedAssignments(mappings, []string{"prod-ops"})))
+	rows, err := roleSvc.ListUserAssignments(ctx, member.ID)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, role.RoleAssignmentSourceOidc, rows[0].Source)
+	require.Equal(t, "prod", kit.FromPtr(rows[0].EnvironmentGroupID))
+	require.Nil(t, rows[0].EnvironmentID)
+
+	ps, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.True(t, ps.Allows(authz.PermProjectsDeploy, "web"))
+	require.False(t, ps.Allows(authz.PermProjectsDeploy, ""))
+}
+
+func TestReconcileEnvOidcMappingsRejectsGroupScope(t *testing.T) {
+	_, roleSvc := setupUserAndRoleServices(t)
+	err := roleSvc.ReconcileEnvOidcMappings(t.Context(), `[{"claimValue":"ops","roleId":"`+authz.BuiltInRoleViewer+`","environmentGroupId":"prod"}]`)
+	require.ErrorContains(t, err, "environmentGroupId is not supported")
+}
+
+// createTestUserGroup creates a user group whose members hold the given grants; scopes follow the grant rows.
+func createTestUserGroup(t *testing.T, db *database.DB, groupID string, memberIDs []string, grants ...usergroup.Grant) {
+	t.Helper()
+	require.NoError(t, db.Create(&usergroup.Group{BaseModel: database.BaseModel{ID: groupID}, Name: "team-" + groupID}).Error)
+	require.NoError(t, db.Create(&usergroup.Link{UserGroupID: groupID, Kind: role.RoleAssignmentSourceOidc, Value: groupID}).Error)
+	for _, memberID := range memberIDs {
+		require.NoError(t, db.Create(&usergroup.Member{UserGroupID: groupID, UserID: memberID, Source: role.RoleAssignmentSourceManual}).Error)
+	}
+	for _, grant := range grants {
+		grant.UserGroupID = groupID
+		require.NoError(t, db.Create(&grant).Error)
+	}
+}
+
+func TestResolvePermissionsIncludesUserGroupGrantsForEveryScope(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	member := createTestUser(t, db, "member", "member")
+	outsider := createTestUser(t, db, "outsider", "outsider")
+	createTestGroup(t, db, "prod", "web", "api")
+	createTestEnvironment(t, db, "box", "agent://box")
+	createTestEnvironment(t, db, "loose", "agent://loose")
+	createTestUserGroup(t, db, "ops", []string{member.ID},
+		usergroup.Grant{RoleID: authz.BuiltInRoleViewer},
+		usergroup.Grant{RoleID: authz.BuiltInRoleDeployer, EnvironmentID: new("box")},
+		usergroup.Grant{RoleID: authz.BuiltInRoleAdmin, EnvironmentGroupID: new("prod")},
+	)
+
+	ps, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.True(t, ps.Allows(authz.PermContainersList, ""), "a global group grant applies globally")
+	require.True(t, ps.Allows(authz.PermProjectsDeploy, "box"), "an agent group grant applies to that agent")
+	require.False(t, ps.Allows(authz.PermProjectsDeploy, "loose"))
+	require.True(t, ps.Allows(authz.PermUsersDelete, "web"), "an environment group grant expands to its agents")
+	require.True(t, ps.Allows(authz.PermUsersDelete, "api"))
+	require.False(t, ps.Allows(authz.PermUsersDelete, "box"))
+	require.False(t, ps.IsGlobalAdmin(), "admin on an environment never widens to global")
+
+	others, err := roleSvc.ResolvePermissions(ctx, outsider.ID)
+	require.NoError(t, err)
+	require.Empty(t, others.Global)
+	require.Empty(t, others.PerEnv, "grants reach only members")
+}
+
+func TestResolvePermissionsNeverWidensMalformedScopes(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	member := createTestUser(t, db, "member", "member")
+	// Rows written around validation must not fall through to a global grant.
+	createTestUserGroup(t, db, "ops", []string{member.ID},
+		usergroup.Grant{RoleID: authz.BuiltInRoleAdmin, EnvironmentID: new("")},
+		usergroup.Grant{RoleID: authz.BuiltInRoleAdmin, EnvironmentGroupID: new("deleted")},
+	)
+	require.NoError(t, db.Create(&role.UserRoleAssignment{UserID: member.ID, RoleID: authz.BuiltInRoleAdmin, EnvironmentID: new(""), Source: role.RoleAssignmentSourceManual}).Error)
+
+	ps, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.Empty(t, ps.Global)
+	require.Empty(t, ps.PerEnv)
+	require.False(t, ps.IsGlobalAdmin())
+}
+
+func TestUserGroupAdminNeverSatisfiesLastAdminGuard(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	direct := createTestUser(t, db, "direct", "direct")
+	viaGroup := createTestUser(t, db, "via-group", "via-group")
+	grantGlobalAdmin(t, roleSvc, direct.ID)
+	createTestUserGroup(t, db, "admins", []string{viaGroup.ID}, usergroup.Grant{RoleID: authz.BuiltInRoleAdmin})
+
+	ps, err := roleSvc.ResolvePermissions(ctx, viaGroup.ID)
+	require.NoError(t, err)
+	require.True(t, ps.IsGlobalAdmin(), "a global admin grant through a group is effective")
+	count, err := roleSvc.CountGlobalAdmins(ctx, db.DB, "")
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "only direct assignments count toward the guard")
+
+	err = roleSvc.ReplaceUserAssignments(ctx, direct.ID, role.RoleAssignmentSourceManual, nil)
+	require.ErrorIs(t, err, common.ErrNoGlobalAdminRemains, "group admins cannot replace the last direct admin")
+}
+
+func TestRoleChangesReachUserGroupMembers(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	grantGlobalAdmin(t, roleSvc, createTestUser(t, db, "root", "root").ID)
+	member := createTestUser(t, db, "member", "member")
+	custom, err := roleSvc.CreateRole(ctx, "Operators", nil, []string{authz.PermContainersList})
+	require.NoError(t, err)
+	createTestUserGroup(t, db, "ops", []string{member.ID}, usergroup.Grant{RoleID: custom.ID})
+
+	before, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.False(t, before.Allows(authz.PermContainersStart, ""))
+	_, err = roleSvc.UpdateRole(ctx, custom.ID, "Operators", nil, []string{authz.PermContainersList, authz.PermContainersStart})
+	require.NoError(t, err)
+	widened, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.True(t, widened.Allows(authz.PermContainersStart, ""), "updating a role invalidates members holding it through a group")
+
+	require.NoError(t, db.Exec("CREATE TABLE federated_credentials (id text PRIMARY KEY, role_id text)").Error)
+	require.NoError(t, roleSvc.DeleteRole(ctx, custom.ID))
+	var grants int64
+	require.NoError(t, db.Model(&usergroup.Grant{}).Where("role_id = ?", custom.ID).Count(&grants).Error)
+	require.Zero(t, grants, "deleting a role deletes its group grants")
+	removed, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.Empty(t, removed.Global, "deleting a role invalidates members holding it through a group")
+}
+
+func TestReplaceUserGroupMembershipsSyncsAndInvalidates(t *testing.T) {
+	ctx := t.Context()
+	db, roleSvc := setupUserAndRoleServices(t)
+	member := createTestUser(t, db, "member", "member")
+	createTestUserGroup(t, db, "ops", nil, usergroup.Grant{RoleID: authz.BuiltInRoleViewer})
+
+	before, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.Empty(t, before.Global)
+
+	require.NoError(t, roleSvc.ReplaceUserGroupMemberships(ctx, member.ID, role.RoleAssignmentSourceOidc, []string{"ops", "unlinked"}))
+	joined, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.True(t, joined.Allows(authz.PermContainersList, ""), "a synced membership invalidates the user's cached permissions")
+	refs, err := roleSvc.UserGroupRefs(ctx, member.ID)
+	require.NoError(t, err)
+	require.Equal(t, []types.UserGroupRef{{ID: "ops", Name: "team-ops"}}, refs)
+
+	require.NoError(t, roleSvc.ReplaceUserGroupMemberships(ctx, member.ID, role.RoleAssignmentSourceOidc, nil))
+	left, err := roleSvc.ResolvePermissions(ctx, member.ID)
+	require.NoError(t, err)
+	require.Empty(t, left.Global, "losing the claim removes the membership and its access")
 }

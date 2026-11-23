@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -22,6 +23,7 @@ import (
 
 	"kit.getarcane.app"
 	"kit.getarcane.app/cache"
+	"kit.getarcane.app/mapping"
 	"kit.getarcane.app/sys/crypto"
 
 	"getarcane.dev/arcane/v3/internal/apikey"
@@ -31,6 +33,7 @@ import (
 	"getarcane.dev/arcane/v3/internal/environment/children/enrollment"
 	"getarcane.dev/arcane/v3/internal/event"
 	"getarcane.dev/arcane/v3/internal/gitrepo"
+	"getarcane.dev/arcane/v3/internal/middleware"
 	"getarcane.dev/arcane/v3/internal/registry"
 	"getarcane.dev/arcane/v3/internal/role"
 	"getarcane.dev/arcane/v3/internal/s3"
@@ -40,6 +43,7 @@ import (
 	"getarcane.dev/arcane/v3/internal/settings"
 	"getarcane.dev/arcane/v3/internal/user"
 	"getarcane.dev/arcane/v3/pkg/agent"
+	"getarcane.dev/arcane/v3/pkg/authz"
 	francistest "getarcane.dev/arcane/v3/pkg/francis/testing"
 	"getarcane.dev/arcane/v3/pkg/httpx"
 	"getarcane.dev/arcane/v3/pkg/pagination"
@@ -142,6 +146,7 @@ func setupEnvironmentServiceTestDB(t *testing.T) *database.DB {
 		&role.Role{},
 		&role.UserRoleAssignment{},
 		&role.ApiKeyPermission{},
+		&role.OidcRoleMapping{},
 		&event.Event{},
 		&testProjectRow{},
 		&testGitOpsSyncRow{},
@@ -149,6 +154,16 @@ func setupEnvironmentServiceTestDB(t *testing.T) *database.DB {
 		&testGlobalVariableRow{},
 		&testGlobalVariableEnvironmentRow{},
 	))
+	// User group tables belong to a role child package; permission resolution only needs them to exist.
+	for _, ddl := range []string{
+		"CREATE TABLE IF NOT EXISTS user_groups (id text PRIMARY KEY, name text)",
+		"CREATE TABLE IF NOT EXISTS user_group_links (id text PRIMARY KEY, user_group_id text, kind text, value text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_members (id text PRIMARY KEY, user_group_id text, user_id text, source text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_role_assignments " +
+			"(id text PRIMARY KEY, user_group_id text, role_id text, environment_id text, environment_group_id text, created_at datetime, updated_at datetime)",
+	} {
+		require.NoError(t, db.Exec(ddl).Error)
+	}
 
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -2142,3 +2157,155 @@ func (*environmentTestVariableSyncer) SyncEnvironment(context.Context, string) e
 }
 
 func (*environmentTestVariableSyncer) ForgetSyncState(string) {}
+
+func TestEnvironmentService_GroupAssignment(t *testing.T) {
+	tunnels := agent.NewTunnelRegistry()
+	ctx := context.WithValue(t.Context(), middleware.ContextKeyUserPermissions, &authz.PermissionSet{Sudo: true})
+	db := setupEnvironmentServiceTestDB(t)
+	invalidations := 0
+	requireInvalidations := func(want int, msg string) {
+		t.Helper()
+		assert.Equal(t, want, invalidations, msg)
+	}
+	svc := NewEnvironmentService(EnvironmentServiceParams{
+		Tunnels:               tunnels,
+		DB:                    db,
+		RemoteTransport:       NewRemoteTransport(db, nil, tunnels),
+		EventService:          event.NewEventService(db, &config.Config{}, nil),
+		VariableSyncer:        &environmentTestVariableSyncer{},
+		InvalidatePermissions: func() { invalidations++ },
+		Config:                &config.Config{},
+		Ctx:                   t.Context(),
+		Scheduler:             &environmentTestScheduler{},
+	})
+	prod, err := svc.groups.Create(ctx, types.CreateEnvironmentGroupRequest{Name: "Prod", Description: "Production"})
+	require.NoError(t, err)
+	staging, err := svc.groups.Create(ctx, types.CreateEnvironmentGroupRequest{Name: "Staging"})
+	require.NoError(t, err)
+	requireGroupIDError := func(err error) {
+		t.Helper()
+		require.ErrorIs(t, err, common.ErrValidation)
+		fieldErr, ok := errors.AsType[*types.FieldError](err)
+		require.True(t, ok)
+		assert.Equal(t, "groupId", fieldErr.Field)
+	}
+
+	created, err := svc.CreateEnvironment(ctx, &Environment{
+		Name:    "Grouped",
+		GroupID: new(prod.ID),
+		Status:  string(EnvironmentStatusPending),
+	}, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, prod.ID, kit.FromPtr(created.GroupID))
+	require.NotNil(t, created.Group, "create returns the embedded group")
+	assert.Equal(t, "Prod", created.Group.Name)
+	requireInvalidations(1, "creating an agent in a group extends the group's grants")
+
+	ungrouped, err := svc.CreateEnvironment(ctx, &Environment{Name: "Ungrouped", Status: string(EnvironmentStatusPending)}, nil, nil)
+	require.NoError(t, err)
+	_, err = svc.UpdateEnvironment(ctx, ungrouped.ID, map[string]any{"name": "Renamed"}, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, svc.DeleteEnvironment(ctx, ungrouped.ID, nil, nil))
+	requireInvalidations(1, "changes that leave group membership alone keep cached permissions")
+
+	_, err = svc.CreateEnvironment(ctx, &Environment{Name: "Orphan", GroupID: new("missing")}, nil, nil)
+	requireGroupIDError(err)
+
+	dto, err := mapping.MapOne[*Environment, types.Environment](created)
+	require.NoError(t, err)
+	assert.Equal(t, prod.ID, dto.GroupID)
+	assert.Equal(t, &types.EnvironmentGroupRef{ID: prod.ID, Name: "Prod", Description: "Production"}, dto.Group)
+
+	moved, err := svc.UpdateEnvironment(ctx, created.ID, map[string]any{"group_id": staging.ID}, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, staging.ID, kit.FromPtr(moved.GroupID))
+	assert.Equal(t, "Staging", kit.FromPtr(moved.Group).Name)
+	assert.Equal(t, "Grouped", moved.Name, "updating the group leaves other fields untouched")
+	requireInvalidations(2, "moving an agent between groups changes who its grants reach")
+	_, err = svc.UpdateEnvironment(ctx, created.ID, map[string]any{"group_id": staging.ID}, nil, nil)
+	require.NoError(t, err)
+	requireInvalidations(2, "re-saving the same group is not a membership change")
+
+	_, err = svc.UpdateEnvironment(ctx, created.ID, map[string]any{"group_id": "missing"}, nil, nil)
+	requireGroupIDError(err)
+
+	visible, err := svc.ListVisibleEnvironments(ctx)
+	require.NoError(t, err)
+	streamed := visible[slices.IndexFunc(visible, func(env types.Environment) bool { return env.ID == created.ID })]
+	assert.Equal(t, "Staging", kit.FromPtr(streamed.Group).Name, "the live stream embeds the group")
+
+	cleared, err := svc.UpdateEnvironment(ctx, created.ID, map[string]any{"group_id": ""}, nil, nil)
+	require.NoError(t, err)
+	assert.Nil(t, cleared.GroupID)
+	assert.Nil(t, cleared.Group)
+	requireInvalidations(3, "leaving a group removes its grants")
+
+	_, err = svc.UpdateEnvironment(ctx, created.ID, map[string]any{"group_id": prod.ID}, nil, nil)
+	require.NoError(t, err)
+	changes, unsubscribe := svc.SubscribeRuntimeChanges()
+	defer unsubscribe()
+	require.NoError(t, svc.groups.Delete(ctx, prod.ID))
+	requireInvalidations(5, "deleting a group removes its grants")
+	select {
+	case <-changes:
+	default:
+		t.Fatal("deleting a group must reload the environment stream")
+	}
+	unassigned, err := svc.GetEnvironmentByID(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Nil(t, unassigned.GroupID, "deleting a group unassigns its agents")
+	assert.Nil(t, unassigned.Group)
+
+	_, err = svc.UpdateEnvironment(ctx, created.ID, map[string]any{"group_id": staging.ID}, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, svc.DeleteEnvironment(ctx, created.ID, nil, nil))
+	requireInvalidations(7, "deleting a grouped agent removes it from the group's grants")
+}
+
+func TestEnvironmentService_GroupChangeRequiresGlobalAdmin(t *testing.T) {
+	tunnels := agent.NewTunnelRegistry()
+	db := setupEnvironmentServiceTestDB(t)
+	svc := NewEnvironmentService(EnvironmentServiceParams{
+		Tunnels:               tunnels,
+		DB:                    db,
+		RemoteTransport:       NewRemoteTransport(db, nil, tunnels),
+		EventService:          event.NewEventService(db, &config.Config{}, nil),
+		VariableSyncer:        &environmentTestVariableSyncer{},
+		InvalidatePermissions: func() {},
+		Config:                &config.Config{},
+		Ctx:                   t.Context(),
+		Scheduler:             &environmentTestScheduler{},
+	})
+	admin := context.WithValue(t.Context(), middleware.ContextKeyUserPermissions, &authz.PermissionSet{Sudo: true})
+	editor := authz.NewPermissionSet()
+	editor.AddGlobal(authz.PermEnvironmentsCreate, authz.PermEnvironmentsUpdate)
+	// Holds global environment rights but is not a global admin.
+	nonAdmin := context.WithValue(t.Context(), middleware.ContextKeyUserPermissions, editor)
+
+	prod, err := svc.groups.Create(admin, types.CreateEnvironmentGroupRequest{Name: "Prod"})
+	require.NoError(t, err)
+	staging, err := svc.groups.Create(admin, types.CreateEnvironmentGroupRequest{Name: "Staging"})
+	require.NoError(t, err)
+	agentInProd, err := svc.CreateEnvironment(admin, &Environment{Name: "App", GroupID: new(prod.ID), Status: string(EnvironmentStatusPending)}, nil, nil)
+	require.NoError(t, err)
+
+	_, err = svc.CreateEnvironment(nonAdmin, &Environment{Name: "Sneaky", GroupID: new(prod.ID), Status: string(EnvironmentStatusPending)}, nil, nil)
+	require.ErrorIs(t, err, common.ErrAgentGroupChangeForbidden, "creating an agent inside a group needs a global admin")
+	_, err = svc.CreateEnvironment(t.Context(), &Environment{Name: "NoCaller", GroupID: new(prod.ID), Status: string(EnvironmentStatusPending)}, nil, nil)
+	require.ErrorIs(t, err, common.ErrAgentGroupChangeForbidden, "a context without permissions is never treated as admin")
+
+	for name, groupID := range map[string]string{"move": staging.ID, "unassign": ""} {
+		_, err = svc.UpdateEnvironment(nonAdmin, agentInProd.ID, map[string]any{"group_id": groupID}, nil, nil)
+		require.ErrorIs(t, err, common.ErrAgentGroupChangeForbidden, name)
+	}
+	unchanged, err := svc.GetEnvironmentByID(admin, agentInProd.ID)
+	require.NoError(t, err)
+	assert.Equal(t, prod.ID, kit.FromPtr(unchanged.GroupID), "a rejected move leaves the agent where it was")
+
+	renamed, err := svc.UpdateEnvironment(nonAdmin, agentInProd.ID, map[string]any{"name": "App 2", "group_id": prod.ID}, nil, nil)
+	require.NoError(t, err, "re-sending the current group with other edits is not a move")
+	assert.Equal(t, "App 2", renamed.Name)
+	ungrouped, err := svc.CreateEnvironment(nonAdmin, &Environment{Name: "Plain", Status: string(EnvironmentStatusPending)}, nil, nil)
+	require.NoError(t, err, "creating an ungrouped agent needs no admin")
+	assert.Nil(t, ungrouped.GroupID)
+}

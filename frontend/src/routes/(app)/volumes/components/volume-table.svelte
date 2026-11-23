@@ -22,7 +22,7 @@
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { volumeBackupVolumeNamesQuery, volumeSizesQuery } from '#lib/query/volumes.js';
 	import { volumeService } from '#lib/services/volume-service.js';
-	import { environmentStore } from '#lib/stores/environment.store.svelte.js';
+	import { environmentStore, type EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
 	import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 	import type { VolumesPaginatedResponse } from '#lib/types/ui/volume.js';
 	import type { VolumeSizeInfo, Volume } from '#lib/types/volume.js';
@@ -50,12 +50,17 @@
 
 	let {
 		volumes,
+		environments,
+		persistKey = 'arcane-volumes-table',
 		selectedIds = $bindable(),
 		requestOptions = $bindable(),
 		onRetry,
 		refreshError
 	}: {
 		volumes: EnvironmentPage<VolumesPaginatedResponse>;
+		/** Environments the table covers; defaults to every shown environment. */
+		environments?: EnvironmentRef[];
+		persistKey?: string;
 		selectedIds: string[];
 		requestOptions: SearchPaginationSortRequest;
 		onRetry: () => Promise<unknown>;
@@ -71,9 +76,12 @@
 	let renameSession = $state(0);
 	let renameEnvironmentId = $state('0');
 
-	const scope = $derived(environmentStore.shownKey);
-	const canDeleteVolume = $derived(hasShownPermission('volumes:delete'));
-	const canRenameVolume = $derived(hasShownPermission('volumes:rename'));
+	const tableEnvironments = $derived(environments ?? environmentStore.shown);
+	const scope = $derived(tableEnvironments.map((env) => env.id).join(','));
+	// A table pinned to one environment needs no environment column or facet.
+	const showEnvironmentColumn = $derived(environments === undefined || environments.length > 1);
+	const canDeleteVolume = $derived(hasShownPermission('volumes:delete', tableEnvironments));
+	const canRenameVolume = $derived(hasShownPermission('volumes:rename', tableEnvironments));
 	let tablePreferences = $state<{ persistCustomSettings(settings: Record<string, unknown>): void }>();
 	let customSettings = $state<Record<string, unknown>>({});
 	let showInternal = $derived((customSettings['showInternalVolumes'] as boolean) ?? false);
@@ -116,10 +124,10 @@
 	const queryClient = useQueryClient();
 
 	const backupVolumeNamesQuery = createQuery(() => {
-		const environments = readableEnvironments('volumes:list');
+		const listEnvironments = readableEnvironments('volumes:list', tableEnvironments);
 		return {
-			...volumeBackupVolumeNamesQuery(scope, environments),
-			enabled: environments.length > 0,
+			...volumeBackupVolumeNamesQuery(scope, listEnvironments),
+			enabled: listEnvironments.length > 0,
 			refetchOnWindowFocus: false
 		};
 	});
@@ -129,13 +137,13 @@
 	};
 	const isBackupVolume = (item: VolumeRow) => isBackupVolumeName(item.name, item.environmentId);
 	const sizesEnabled = $derived(
-		tablePreferencesReady && columnVisibility['size'] !== false && hasShownPermission('volumes:read')
+		tablePreferencesReady && columnVisibility['size'] !== false && hasShownPermission('volumes:read', tableEnvironments)
 	);
 	const sizesQuery = createQuery(() => {
 		const queryScope = scope;
-		const environments = readableEnvironments('volumes:list');
+		const listEnvironments = readableEnvironments('volumes:list', tableEnvironments);
 		return {
-			...volumeSizesQuery(queryScope, environments),
+			...volumeSizesQuery(queryScope, listEnvironments),
 			enabled: sizesEnabled,
 			refetchOnWindowFocus: false,
 			retry: false
@@ -243,7 +251,7 @@
 	}
 
 	const columns = $derived([
-		...environmentColumns<VolumeRow>(),
+		...(showEnvironmentColumn ? environmentColumns<VolumeRow>() : []),
 		{ accessorKey: 'id', title: m.common_id(), hidden: true },
 		{ accessorKey: 'name', title: m.common_name(), sortable: true, cell: NameCell },
 		{ accessorKey: 'inUse', title: m.common_status(), sortable: true, cell: StatusCell },
@@ -400,7 +408,7 @@
 
 <ArcaneTable
 	bind:this={tablePreferences}
-	persistKey="arcane-volumes-table"
+	{persistKey}
 	items={withFailedEnvironments(volumes, backupVolumeNamesQuery.data?.failures)}
 	bind:requestOptions
 	bind:selectedIds

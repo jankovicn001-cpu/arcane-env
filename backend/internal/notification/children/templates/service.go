@@ -1,10 +1,7 @@
 package templates
 
 import (
-	"cmp"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 	"time"
 
@@ -22,83 +19,6 @@ type (
 
 func NewService(appURL func() string) *Service {
 	return &Service{appURL: appURL}
-}
-
-func (s *Service) ImageUpdate(environmentName, imageRef string, updateInfo *types.ImageUpdateResponse) notifications.Content {
-	return notifications.Content{
-		Text: notifications.TextByFormat(func(format notifications.MessageFormat) string {
-			return notifications.BuildImageUpdateNotificationMessage(format, environmentName, imageRef, updateInfo)
-		}),
-		Title:     "Container Image Update",
-		NtfyTitle: "📦 Container Image Update",
-		RenderEmail: func() (string, string, error) {
-			rows := []emailRow{
-				{Label: "Environment", Value: environmentName},
-				{Label: "Image", Value: imageRef},
-				{Label: "Update Type", Value: updateInfo.UpdateType},
-			}
-			if updateInfo.CurrentVersion != "" {
-				rows = append(rows, emailRow{
-					Label: "Current Version",
-					Value: updateInfo.CurrentVersion,
-				})
-			}
-			if updateInfo.LatestVersion != "" {
-				rows = append(rows, emailRow{
-					Label: "Latest Version",
-					Value: updateInfo.LatestVersion,
-				})
-			}
-			rows = append(rows,
-				emailRow{Label: "Current Digest", Value: updateInfo.CurrentDigest},
-				emailRow{Label: "Latest Digest", Value: updateInfo.LatestDigest},
-				emailRow{Label: "Checked", Value: updateInfo.CheckTime.Format(time.RFC1123)},
-			)
-			htmlBody, err := renderEmail(emailData{
-				Title:  "Container Image Update Available",
-				Rows:   rows,
-				AppURL: s.appURL(),
-			})
-			if err != nil {
-				return "", "", fmt.Errorf("failed to render email: %w", err)
-			}
-			subject := notifications.BuildEmailSubject(environmentName, "Container Update Available: "+notifications.SanitizeForEmail(imageRef))
-			return subject, htmlBody, nil
-		},
-		RequireNtfyTopic:     true,
-		ValidatePushoverUser: true,
-	}
-}
-
-func (s *Service) ContainerUpdate(environmentName, containerName, imageRef, oldDigest, newDigest string) notifications.Content {
-	return notifications.Content{
-		Text: notifications.TextByFormat(func(format notifications.MessageFormat) string {
-			return notifications.BuildContainerUpdateNotificationMessage(format, environmentName, containerName, imageRef, oldDigest, newDigest)
-		}),
-		Title:     "Container Updated",
-		NtfyTitle: "✅ Container Updated",
-		RenderEmail: func() (string, string, error) {
-			htmlBody, err := renderEmail(emailData{
-				Title: "Container Updated",
-				Rows: []emailRow{
-					{Label: "Environment", Value: environmentName},
-					{Label: "Container", Value: containerName},
-					{Label: "Image", Value: imageRef},
-					{Label: "Old Digest", Value: oldDigest},
-					{Label: "New Digest", Value: newDigest},
-					{Label: "Updated", Value: time.Now().Format(time.RFC1123)},
-				},
-				AppURL: s.appURL(),
-			})
-			if err != nil {
-				return "", "", fmt.Errorf("failed to render email: %w", err)
-			}
-			subject := notifications.BuildEmailSubject(environmentName, "Container Updated: "+notifications.SanitizeForEmail(containerName))
-			return subject, htmlBody, nil
-		},
-		RequireNtfyTopic:     true,
-		ValidatePushoverUser: true,
-	}
 }
 
 func (s *Service) Vulnerability(environmentName string, payload types.NotificationDispatchVulnerabilityFound) notifications.Content {
@@ -135,96 +55,6 @@ func (s *Service) Vulnerability(environmentName string, payload types.Notificati
 				return "", "", fmt.Errorf("failed to render summary email: %w", err)
 			}
 			subject := notifications.BuildEmailSubject(environmentName, "Daily Vulnerability Summary: "+notifications.SanitizeForEmail(payload.CVEID))
-			return subject, htmlBody, nil
-		},
-		RequireNtfyTopic:     true,
-		ValidatePushoverUser: true,
-	}
-}
-
-func (s *Service) BatchImageUpdate(environmentName string, updates map[string]*types.ImageUpdateResponse, includeReleaseLinks bool) notifications.Content {
-	ntfyTitle := fmt.Sprintf("📦 %d Container Image Updates", len(updates))
-	if len(updates) == 1 {
-		ntfyTitle = "📦 1 Container Image Update"
-	}
-
-	return notifications.Content{
-		Text: notifications.TextByFormat(func(format notifications.MessageFormat) string {
-			return notifications.BuildBatchImageUpdateNotificationMessage(format, environmentName, updates, includeReleaseLinks)
-		}),
-		Title:     "Container Image Updates Available",
-		NtfyTitle: ntfyTitle,
-		RenderEmail: func() (string, string, error) {
-			rows := []emailRow{{Label: "Environment", Value: environmentName}}
-			for _, imageRef := range slices.Sorted(maps.Keys(updates)) {
-				current, latest := notifications.UpdateVersions(updates[imageRef])
-				rows = append(rows, emailRow{
-					Label: imageRef,
-					Value: kit.Ternary(
-						current == "" && latest == "",
-						updates[imageRef].UpdateType,
-						fmt.Sprintf("%s: %s → %s", updates[imageRef].UpdateType, cmp.Or(current, "-"), cmp.Or(latest, "-")),
-					),
-				})
-				if includeReleaseLinks && updates[imageRef].ReleaseURL != "" {
-					rows = append(rows, emailRow{
-						Label: imageRef + " release notes",
-						Value: updates[imageRef].ReleaseURL,
-					})
-				}
-			}
-			updateCount := len(updates)
-			plural := kit.Ternary(updateCount > 1, "s", "")
-			htmlBody, err := renderEmail(emailData{
-				Title:  fmt.Sprintf("%d Image Update%s Available", updateCount, plural),
-				Intro:  "Checked " + time.Now().Format(time.RFC1123),
-				Rows:   rows,
-				AppURL: s.appURL(),
-			})
-			if err != nil {
-				return "", "", fmt.Errorf("failed to render email: %w", err)
-			}
-			subject := notifications.BuildEmailSubject(environmentName, fmt.Sprintf("%d Image Update%s Available", updateCount, plural))
-			return subject, htmlBody, nil
-		},
-	}
-}
-
-func (s *Service) BatchContainerUpdate(environmentName string, entries []notifications.ContainerUpdateBatchEntry) notifications.Content {
-	ntfyTitle := fmt.Sprintf("✅ %d Containers Updated", len(entries))
-	if len(entries) == 1 {
-		ntfyTitle = "✅ 1 Container Updated"
-	}
-
-	return notifications.Content{
-		Text: notifications.TextByFormat(func(format notifications.MessageFormat) string {
-			return notifications.BuildBatchContainerUpdateNotificationMessage(format, environmentName, entries)
-		}),
-		Title:     "Containers Updated",
-		NtfyTitle: ntfyTitle,
-		RenderEmail: func() (string, string, error) {
-			sorted := slices.SortedFunc(slices.Values(entries), func(a, b notifications.ContainerUpdateBatchEntry) int {
-				return cmp.Compare(a.ContainerName, b.ContainerName)
-			})
-			rows := []emailRow{{Label: "Environment", Value: environmentName}}
-			for _, entry := range sorted {
-				rows = append(rows, emailRow{
-					Label: entry.ContainerName,
-					Value: fmt.Sprintf("%s (%s → %s)", entry.ImageRef, entry.OldDigest, entry.NewDigest),
-				})
-			}
-			updateCount := len(entries)
-			plural := kit.Ternary(updateCount > 1, "s", "")
-			htmlBody, err := renderEmail(emailData{
-				Title:  fmt.Sprintf("%d Container%s Updated", updateCount, plural),
-				Intro:  "Completed " + time.Now().Format(time.RFC1123),
-				Rows:   rows,
-				AppURL: s.appURL(),
-			})
-			if err != nil {
-				return "", "", fmt.Errorf("failed to render email: %w", err)
-			}
-			subject := notifications.BuildEmailSubject(environmentName, fmt.Sprintf("%d Container%s Updated", updateCount, plural))
 			return subject, htmlBody, nil
 		},
 		RequireNtfyTopic:     true,
@@ -297,8 +127,15 @@ func (s *Service) AutoHeal(environmentName, containerName string) notifications.
 	}
 }
 
-func (s *Service) TestEmail(environmentName string) notifications.Content {
+func (s *Service) Test(environmentName string) notifications.Content {
+	defaultTitle := notifications.BuildEmailSubject(environmentName, "Test Notification")
 	return notifications.Content{
+		Text: notifications.TextByFormat(func(format notifications.MessageFormat) string {
+			return notifications.BuildTestNotificationMessage(format, environmentName)
+		}),
+		Title:        defaultTitle,
+		NtfyTitle:    "✅ Test Notification",
+		DefaultTitle: defaultTitle,
 		RenderEmail: func() (string, string, error) {
 			htmlBody, err := renderEmail(emailData{
 				Title:  "Test Email",

@@ -50,60 +50,19 @@ func TestNewClient(t *testing.T) {
 
 func TestDetectFeatures(t *testing.T) {
 	tests := []struct {
-		name             string
-		version          string
-		want             Features
-		systemdAvailable bool
+		name    string
+		version string
+		want    Features
 	}{
-		{
-			name:             "podman 4 with systemd",
-			version:          "4.9.4",
-			systemdAvailable: true,
-			want:             Features{AutoUpdateMode: types.PodmanAutoUpdateModeSystemd},
-		},
-		{
-			name:    "podman 5.7 without systemd",
-			version: "5.7.1",
-			want:    Features{AutoUpdateMode: types.PodmanAutoUpdateModeUnavailable},
-		},
-		{
-			name:             "podman 5.8",
-			version:          "5.8.0",
-			systemdAvailable: true,
-			want: Features{
-				QuadletsSupported: true,
-				AutoUpdateMode:    types.PodmanAutoUpdateModeSystemd,
-			},
-		},
-		{
-			name:    "podman 6.1 with v prefix",
-			version: "v6.1.2",
-			want: Features{
-				QuadletsSupported:    true,
-				QuadletAppsSupported: true,
-				AutoUpdateMode:       types.PodmanAutoUpdateModeUnavailable,
-			},
-		},
-		{
-			name:    "podman 6.2 uses rest",
-			version: "6.2.0",
-			want: Features{
-				QuadletsSupported:    true,
-				QuadletAppsSupported: true,
-				AutoUpdateMode:       types.PodmanAutoUpdateModeREST,
-			},
-		},
-		{
-			name:             "invalid version",
-			version:          "unknown",
-			systemdAvailable: true,
-			want:             Features{AutoUpdateMode: types.PodmanAutoUpdateModeSystemd},
-		},
+		{name: "podman 4", version: "4.9.4", want: Features{}},
+		{name: "podman 5.8", version: "5.8.0", want: Features{QuadletsSupported: true}},
+		{name: "podman 6.1 with v prefix", version: "v6.1.2", want: Features{QuadletsSupported: true, QuadletAppsSupported: true}},
+		{name: "invalid version", version: "unknown", want: Features{}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, DetectFeatures(tt.version, tt.systemdAvailable))
+			assert.Equal(t, tt.want, DetectFeatures(tt.version))
 		})
 	}
 }

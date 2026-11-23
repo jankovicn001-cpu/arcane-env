@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/state';
-	import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { mode } from 'mode-watcher';
 	import { PersistedState, watch } from 'runed';
 	import { onMount, tick, untrack } from 'svelte';
@@ -22,7 +22,6 @@
 	import ProjectGitBackupSummary from '#lib/components/gitops/project-git-backup-summary.svelte';
 	import IconImage from '#lib/components/icon-image.svelte';
 	import ProjectTagEditor from '#lib/components/project-tag-editor.svelte';
-	import ProjectUpdateItem from '#lib/components/project-update-item.svelte';
 	import ResizableSplit from '#lib/components/resizable-split.svelte';
 	import { type TabItem } from '#lib/components/tab-bar/index.js';
 	import * as Alert from '#lib/components/ui/alert/index.js';
@@ -92,7 +91,6 @@
 	import { createForm } from '#lib/utils/settings.svelte.js';
 	import { globalVariablesToMap } from '#lib/utils/template-load.js';
 	import { tryCatch } from '#lib/utils/try-catch.js';
-	import { summarizeUpdateCheckResult } from '#lib/utils/update-actions.js';
 	import {
 		buildWorkspaceMultipartUpdate,
 		isWorkspaceFileSelectionUnder,
@@ -743,29 +741,6 @@
 			])
 		);
 	}
-
-	const checkProjectUpdatesMutation = createMutation(() => ({
-		mutationKey: queryKeys.projects.detailCheckUpdates(envId, projectId),
-		mutationFn: () => projectService.checkUpdates(projectId, envId),
-		onSuccess: async (result) => {
-			const currentEnvId = envId;
-			summarizeUpdateCheckResult(result);
-			await Promise.all([
-				refreshProjectDetails(),
-				...listScopes([currentEnvId]).flatMap((scope) => [
-					queryClient.invalidateQueries({
-						queryKey: queryKeys.projects.listPrefix(scope)
-					}),
-					queryClient.invalidateQueries({
-						queryKey: queryKeys.projects.statusCounts(scope)
-					})
-				])
-			]);
-		},
-		onError: () => {
-			toast.error(m.containers_check_updates_failed());
-		}
-	}));
 
 	function initializeProjectPreferences() {
 		if (!project?.id) return;
@@ -1608,10 +1583,6 @@
 		});
 	}
 
-	async function handleCheckProjectUpdates() {
-		await checkProjectUpdatesMutation.mutateAsync();
-	}
-
 	function formatUrlLabel(raw: string): string {
 		const trimmed = raw.trim();
 		if (!trimmed) return raw;
@@ -2060,7 +2031,6 @@
 				services={project.runtimeServices}
 				{projectId}
 				environmentId={envId}
-				updateInfoByRef={project.updateInfo?.updateInfoByRef}
 				onRefresh={() => refreshProjectDetails()}
 			/>
 		</div>
@@ -2468,13 +2438,6 @@
 					availableTags={availableProjectTags}
 					canEdit={canUpdateProject}
 					onToggle={handleProjectTagToggle}
-				/>
-				<ProjectUpdateItem
-					updateInfo={project.updateInfo}
-					environmentId={envId}
-					onCheck={handleCheckProjectUpdates}
-					checking={checkProjectUpdatesMutation.isPending}
-					disabled={!!project.isArchived || composeActionsBlocked}
 				/>
 			</div>
 

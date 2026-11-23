@@ -21,29 +21,6 @@ type (
 		Success bool `json:"success" doc:"Whether the request was successful"`
 	}
 
-	ImageUpdateInfo struct {
-		CheckTime      time.Time `json:"checkTime"`
-		UpdateType     string    `json:"updateType"`
-		CurrentVersion string    `json:"currentVersion"`
-		LatestVersion  string    `json:"latestVersion"`
-		CurrentDigest  string    `json:"currentDigest"`
-		LatestDigest   string    `json:"latestDigest"`
-
-		CurrentCreated *time.Time `json:"currentCreated,omitempty"`
-
-		LatestCreated *time.Time `json:"latestCreated,omitempty"`
-		Error         string     `json:"error"`
-		BlockedReason string     `json:"blockedReason,omitempty"`
-		AuthMethod    string     `json:"authMethod,omitempty"`
-		AuthUsername  string     `json:"authUsername,omitempty"`
-		AuthRegistry  string     `json:"authRegistry,omitempty"`
-
-		ResponseTimeMs int  `json:"responseTimeMs"`
-		HasUpdate      bool `json:"hasUpdate"`
-		Blocked        bool `json:"blocked,omitempty"`
-		UsedCredential bool `json:"usedCredential,omitempty"`
-	}
-
 	ImageUsedBy struct {
 		Type string `json:"type"`
 		Name string `json:"name"`
@@ -76,7 +53,6 @@ type (
 
 	ImageSummary struct {
 		Labels            map[string]any            `json:"labels"`
-		UpdateInfo        *ImageUpdateInfo          `json:"updateInfo,omitempty"`
 		VulnerabilityScan *VulnerabilityScanSummary `json:"vulnerabilityScan,omitempty"`
 		Hardened          *HardenedImageInfo        `json:"hardened,omitempty"`
 
@@ -101,17 +77,6 @@ type (
 		Platform      string             `json:"platform,omitempty"`
 		Source        string             `json:"source,omitempty"`
 		Attestations  []ImageAttestation `json:"attestations"`
-	}
-
-	ImageReleaseNotes struct {
-		ImageRef    string `json:"imageRef"`
-		Version     string `json:"version,omitempty"`
-		Status      string `json:"status"`
-		SourceURL   string `json:"sourceUrl,omitempty"`
-		ReleaseURL  string `json:"releaseUrl,omitempty"`
-		ReleaseName string `json:"releaseName,omitempty"`
-		Notes       string `json:"notes,omitempty"`
-		PublishedAt string `json:"publishedAt,omitempty"`
 	}
 
 	ImageAttestation struct {
@@ -202,7 +167,6 @@ type (
 		RepoDigests      []string           `json:"repoDigests"`
 		PinnedReferences []string           `json:"pinnedReferences,omitempty"`
 		Hardened         *HardenedImageInfo `json:"hardened,omitempty"`
-		UpdateInfo       *ImageUpdateInfo   `json:"updateInfo,omitempty"`
 		Config           struct {
 			ExposedPorts map[string]struct{} `json:"exposedPorts,omitempty"`
 			Volumes      map[string]struct{} `json:"volumes,omitempty"`

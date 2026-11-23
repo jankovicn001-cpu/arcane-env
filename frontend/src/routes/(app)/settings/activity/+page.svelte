@@ -7,7 +7,7 @@
 <EnvironmentSettingsPage
 	title={m.activity()}
 	description={m.activity_settings_description()}
-	keys={['activityHistoryRetentionDays', 'upgradeLogRetentionDays', 'activityHistoryMaxEntries', 'maxConcurrentActivities']}
+	keys={['activityHistoryRetentionDays', 'activityHistoryMaxEntries', 'maxConcurrentActivities']}
 >
 	{#snippet content({ formInputs, mixed, lock })}
 		<ActivityTab {formInputs} {mixed} {lock} />

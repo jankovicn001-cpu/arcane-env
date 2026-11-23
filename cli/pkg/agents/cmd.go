@@ -7,11 +7,17 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"kit.getarcane.app"
+
+	"getarcane.dev/cli/v3/internal/client"
 	"getarcane.dev/cli/v3/internal/cmdutil"
 	"getarcane.dev/cli/v3/internal/output"
 	clitypes "getarcane.dev/cli/v3/internal/types"
+	"getarcane.dev/cli/v3/pkg/environments"
 	"getarcane.dev/types/v3"
 )
+
+const environmentFlagUsage = "Environment ID or name the agent belongs to"
 
 func Command() *cobra.Command {
 	command := &cobra.Command{
@@ -53,11 +59,12 @@ func newListCmd() *cobra.Command {
 				Resource: "agents",
 				Endpoint: clitypes.Environments(),
 				Params:   cmdutil.ListParams{Resource: "agents", Limit: opts.limit, FallbackDefault: 20, Start: opts.start, All: opts.all},
-				Headers:  []string{"ID", "NAME", "API URL", "STATUS", "ENABLED"},
+				Headers:  []string{"ID", "NAME", "ENVIRONMENT", "API URL", "STATUS", "ENABLED"},
 				Row: func(env types.Environment) []string {
 					return []string{
 						env.ID,
 						env.Name,
+						kit.FromPtr(env.Group).Name,
 						env.ApiUrl,
 						env.Status,
 						strconv.FormatBool(env.Enabled),
@@ -121,6 +128,7 @@ func newGetCmd() *cobra.Command {
 					output.Header("Agent Details")
 					output.KeyValue("ID", data.ID)
 					output.KeyValue("Name", data.Name)
+					output.KeyValue("Environment", kit.FromPtr(data.Group).Name)
 					output.KeyValue("API URL", data.ApiUrl)
 					output.KeyValue("Status", data.Status)
 					output.KeyValue("Enabled", data.Enabled)
@@ -197,8 +205,9 @@ func newTunnelRestartCmd() *cobra.Command {
 
 func newUpdateCmd() *cobra.Command {
 	var opts struct {
-		name    string
-		enabled bool
+		name        string
+		environment string
+		enabled     bool
 	}
 	command := &cobra.Command{
 		Use:          "update <id>",
@@ -215,6 +224,14 @@ func newUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("name") {
 				req["name"] = opts.name
 			}
+			if cmd.Flags().Changed("environment") {
+				// An empty --environment unassigns the agent.
+				groupID, resolveErr := resolveGroupID(cmd, c, opts.environment)
+				if resolveErr != nil {
+					return resolveErr
+				}
+				req["groupId"] = groupID
+			}
 			if cmd.Flags().Changed("enabled") {
 				req["enabled"] = opts.enabled
 			}
@@ -228,6 +245,7 @@ func newUpdateCmd() *cobra.Command {
 					output.Success("Agent updated successfully")
 					output.KeyValue("ID", data.ID)
 					output.KeyValue("Name", data.Name)
+					output.KeyValue("Environment", kit.FromPtr(data.Group).Name)
 					output.KeyValue("API URL", data.ApiUrl)
 					output.KeyValue("Enabled", data.Enabled)
 					return nil
@@ -236,14 +254,16 @@ func newUpdateCmd() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&opts.name, "name", "", "Agent name")
+	command.Flags().StringVar(&opts.environment, "environment", "", environmentFlagUsage+" (empty unassigns it)")
 	command.Flags().BoolVar(&opts.enabled, "enabled", false, "Enable agent")
 	return command
 }
 
 func newCreateCmd() *cobra.Command {
 	var opts struct {
-		name    string
-		enabled bool
+		name        string
+		environment string
+		enabled     bool
 	}
 	command := &cobra.Command{
 		Use:          "create",
@@ -256,18 +276,28 @@ func newCreateCmd() *cobra.Command {
 				return err
 			}
 
+			body := map[string]any{
+				"name":    opts.name,
+				"enabled": opts.enabled,
+			}
+			if opts.environment != "" {
+				groupID, resolveErr := resolveGroupID(cmd, c, opts.environment)
+				if resolveErr != nil {
+					return resolveErr
+				}
+				body["groupId"] = groupID
+			}
+
 			return cmdutil.Run(cmd, c, cmdutil.Spec[types.Environment]{
 				Method:         http.MethodPost,
 				Path:           clitypes.Environments(),
 				FailureMessage: "failed to create agent",
-				Body: map[string]any{
-					"name":    opts.name,
-					"enabled": opts.enabled,
-				},
+				Body:           body,
 				Render: func(data types.Environment) error {
 					output.Success("Agent created successfully")
 					output.KeyValue("ID", data.ID)
 					output.KeyValue("Name", data.Name)
+					output.KeyValue("Environment", kit.FromPtr(data.Group).Name)
 					output.KeyValue("API URL", data.ApiUrl)
 					output.KeyValue("Enabled", data.Enabled)
 
@@ -287,6 +317,7 @@ func newCreateCmd() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&opts.name, "name", "", "Agent name (required)")
+	command.Flags().StringVar(&opts.environment, "environment", "", environmentFlagUsage)
 	command.Flags().BoolVar(&opts.enabled, "enabled", true, "Enable agent")
 	_ = command.MarkFlagRequired("name")
 	return command
@@ -316,10 +347,21 @@ func newVersionCmd() *cobra.Command {
 					output.KeyValue("Revision", data.ShortRevision)
 					output.KeyValue("Go Version", data.GoVersion)
 					output.KeyValue("Build Time", data.BuildTime)
-					output.KeyValue("Update Available", strconv.FormatBool(data.UpdateAvailable))
 					return nil
 				},
 			})
 		},
 	}
+}
+
+// resolveGroupID maps an environment ID or name to its ID; an empty reference means unassigned.
+func resolveGroupID(cmd *cobra.Command, c *client.Client, reference string) (string, error) {
+	if reference == "" {
+		return "", nil
+	}
+	group, _, err := environments.GroupRef.Resolve(cmd.Context(), c, reference, cmdutil.AllowPrompt(cmd))
+	if err != nil {
+		return "", err
+	}
+	return group.ID, nil
 }

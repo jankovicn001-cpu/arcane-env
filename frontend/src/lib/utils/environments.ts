@@ -6,6 +6,7 @@ import type { APIRequestConfig } from '#lib/services/api-service.js';
 import settingsStore from '#lib/stores/config-store.svelte.js';
 import { environmentStore, LOCAL_DOCKER_ENVIRONMENT_ID, type EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
 import type { Paginated } from '#lib/types/base.js';
+import type { EnvironmentGroupRef } from '#lib/types/environment.js';
 import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 import { extractApiErrorMessage } from '#lib/utils/api.js';
 import { hasPermission } from '#lib/utils/auth.js';
@@ -70,13 +71,64 @@ export function actionEnvironments(...permissions: string[]): EnvironmentRef[] {
 	return permitted.length > 0 ? permitted : environmentStore.shown;
 }
 
-export function readableEnvironments(permission: string): EnvironmentRef[] {
-	return environmentStore.shown.filter((env) => hasPermission(permission, env.id));
+export function readableEnvironments(
+	permission: string,
+	environments: EnvironmentRef[] = environmentStore.shown
+): EnvironmentRef[] {
+	return environments.filter((env) => hasPermission(permission, env.id));
 }
 
-/** Whether a permission is held in any shown environment; row actions check the row's own environment. */
-export function hasShownPermission(permission: string): boolean {
-	return environmentStore.shown.some((env) => hasPermission(permission, env.id));
+/** List permission of each resource an environment's page browses; holding any one opens the page. */
+export const ENVIRONMENT_RESOURCE_PERMISSIONS = {
+	containers: 'containers:list',
+	projects: 'projects:list',
+	images: 'images:list',
+	volumes: 'volumes:list',
+	networks: 'networks:list'
+} as const;
+
+export type EnvironmentResource = keyof typeof ENVIRONMENT_RESOURCE_PERMISSIONS;
+
+/** Shown environments the user can browse at least one resource in. */
+export function browsableEnvironments(): EnvironmentRef[] {
+	const permissions = Object.values(ENVIRONMENT_RESOURCE_PERMISSIONS);
+	return environmentStore.shown.filter((env) => permissions.some((permission) => hasPermission(permission, env.id)));
+}
+
+/** Route id of the agents that belong to no environment group. */
+export const UNASSIGNED_GROUP_ID = 'unassigned';
+
+/** An environment group's browsable agents; Unassigned uses `UNASSIGNED_GROUP_ID`. */
+export type EnvironmentGroupBucket = { id: string; name: string; description: string; environments: EnvironmentRef[] };
+
+/**
+ * Browsable agents bucketed by environment group: groups sorted by name, Unassigned last, agents in their given order.
+ * `managed` adds groups with no browsable agents, so admins see groups they just created.
+ */
+export function browsableEnvironmentGroups(managed: EnvironmentGroupRef[] = []): EnvironmentGroupBucket[] {
+	const available = new Map(environmentStore.available.map((env) => [env.id, env]));
+	const buckets = new Map<string, EnvironmentGroupBucket>(
+		managed.map(({ id, name, description }) => [id, { id, name, description, environments: [] }])
+	);
+	for (const environment of browsableEnvironments()) {
+		const group = available.get(environment.id)?.group;
+		const id = group?.id ?? UNASSIGNED_GROUP_ID;
+		const bucket = buckets.get(id) ?? {
+			id,
+			name: group?.name ?? m.unassigned(),
+			description: group?.description ?? m.unassigned_agents_description(),
+			environments: []
+		};
+		buckets.set(id, { ...bucket, environments: [...bucket.environments, environment] });
+	}
+	return [...buckets.values()].sort(
+		(a, b) => Number(a.id === UNASSIGNED_GROUP_ID) - Number(b.id === UNASSIGNED_GROUP_ID) || a.name.localeCompare(b.name)
+	);
+}
+
+/** Whether a permission is held in any of the environments; row actions check the row's own environment. */
+export function hasShownPermission(permission: string, environments: EnvironmentRef[] = environmentStore.shown): boolean {
+	return environments.some((env) => hasPermission(permission, env.id));
 }
 
 export function environmentHref(path: string, environmentId: string): string {

@@ -32,7 +32,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/event"
 	"getarcane.dev/arcane/v3/internal/gitops"
 	"getarcane.dev/arcane/v3/internal/project"
-	"getarcane.dev/arcane/v3/internal/updater"
 	"getarcane.dev/arcane/v3/pkg/authz"
 	"getarcane.dev/arcane/v3/pkg/handlerutil"
 	"getarcane.dev/arcane/v3/pkg/httpx"
@@ -51,7 +50,6 @@ type (
 
 		db                 *database.DB
 		containerService   *container.ContainerService
-		updaterService     *updater.UpdaterService
 		projectService     *project.ProjectService
 		gitOpsSyncService  *gitops.GitOpsSyncService
 		eventService       *event.EventService
@@ -67,7 +65,6 @@ type (
 
 		DB                 *database.DB
 		ContainerService   *container.ContainerService
-		UpdaterService     *updater.UpdaterService
 		ProjectService     *project.ProjectService
 		GitOpsSyncService  *gitops.GitOpsSyncService
 		EventService       *event.EventService
@@ -160,7 +157,7 @@ var (
 	ErrWebhookNotFound           = common.Classify(common.ErrNotFound, errors.New("webhook not found"))
 	ErrWebhookInvalid            = errors.New("invalid webhook token")
 	ErrWebhookDisabled           = errors.New("webhook is disabled")
-	ErrWebhookInvalidType        = common.Classify(common.ErrValidation, errors.New("invalid target type, must be 'container', 'project', 'updater', or 'gitops'"))
+	ErrWebhookInvalidType        = common.Classify(common.ErrValidation, errors.New("invalid target type, must be 'container', 'project', or 'gitops'"))
 	ErrWebhookInvalidAction      = common.Classify(common.ErrValidation, errors.New("invalid action type for target type"))
 	ErrWebhookMissingName        = common.Classify(common.ErrValidation, errors.New("webhook name is required"))
 	ErrWebhookMissingTarget      = common.Classify(common.ErrValidation, errors.New("target ID is required for container, project, and gitops webhook types"))
@@ -172,21 +169,16 @@ var (
 
 	webhookActionPermissions = map[string]map[string]string{
 		WebhookTargetTypeContainer: {
-			WebhookActionTypeUpdate:   authz.PermImageUpdatesApply,
 			WebhookActionTypeStart:    authz.PermContainersStart,
 			WebhookActionTypeStop:     authz.PermContainersStop,
 			WebhookActionTypeRestart:  authz.PermContainersRestart,
 			WebhookActionTypeRedeploy: authz.PermContainersRedeploy,
 		},
 		WebhookTargetTypeProject: {
-			WebhookActionTypeUpdate:   authz.PermProjectsUpdate,
 			WebhookActionTypeUp:       authz.PermProjectsDeploy,
 			WebhookActionTypeDown:     authz.PermProjectsDown,
 			WebhookActionTypeRestart:  authz.PermProjectsRestart,
 			WebhookActionTypeRedeploy: authz.PermProjectsDeploy,
-		},
-		WebhookTargetTypeUpdater: {
-			WebhookActionTypeRun: authz.PermImageUpdatesApply,
 		},
 		WebhookTargetTypeGitOps: {
 			WebhookActionTypeSync: authz.PermGitOpsSync,
@@ -198,7 +190,6 @@ func NewWebhookService(p WebhookServiceParams) *WebhookService {
 	return &WebhookService{
 		db:                 p.DB,
 		containerService:   p.ContainerService,
-		updaterService:     p.UpdaterService,
 		projectService:     p.ProjectService,
 		gitOpsSyncService:  p.GitOpsSyncService,
 		eventService:       p.EventService,
@@ -264,29 +255,16 @@ func (s *WebhookService) IsKnownToken(raw string) bool {
 	return ok
 }
 
-func defaultWebhookActionType(targetType string) (string, error) {
-	switch targetType {
-	case WebhookTargetTypeContainer, WebhookTargetTypeProject:
-		return WebhookActionTypeUpdate, nil
-	case WebhookTargetTypeUpdater:
-		return WebhookActionTypeRun, nil
-	case WebhookTargetTypeGitOps:
-		return WebhookActionTypeSync, nil
-	default:
-		return "", ErrWebhookInvalidType
-	}
-}
-
 func resolveWebhookActionType(targetType, actionType string) (string, error) {
 	switch targetType {
-	case WebhookTargetTypeContainer, WebhookTargetTypeProject, WebhookTargetTypeUpdater, WebhookTargetTypeGitOps:
+	case WebhookTargetTypeContainer, WebhookTargetTypeProject, WebhookTargetTypeGitOps:
 	default:
 		return "", ErrWebhookInvalidType
 	}
 
 	normalizedActionType := strings.TrimSpace(strings.ToLower(actionType))
-	if normalizedActionType == "" {
-		return defaultWebhookActionType(targetType)
+	if normalizedActionType == "" && targetType == WebhookTargetTypeGitOps {
+		return WebhookActionTypeSync, nil
 	}
 
 	if targetType == WebhookTargetTypeProject && normalizedActionType == "deploy" {
@@ -296,16 +274,12 @@ func resolveWebhookActionType(targetType, actionType string) (string, error) {
 	switch targetType {
 	case WebhookTargetTypeContainer:
 		switch normalizedActionType {
-		case WebhookActionTypeUpdate, WebhookActionTypeStart, WebhookActionTypeStop, WebhookActionTypeRestart, WebhookActionTypeRedeploy:
+		case WebhookActionTypeStart, WebhookActionTypeStop, WebhookActionTypeRestart, WebhookActionTypeRedeploy:
 			return normalizedActionType, nil
 		}
 	case WebhookTargetTypeProject:
 		switch normalizedActionType {
-		case WebhookActionTypeUpdate, WebhookActionTypeUp, WebhookActionTypeDown, WebhookActionTypeRestart, WebhookActionTypeRedeploy:
-			return normalizedActionType, nil
-		}
-	case WebhookTargetTypeUpdater:
-		if normalizedActionType == WebhookActionTypeRun {
+		case WebhookActionTypeUp, WebhookActionTypeDown, WebhookActionTypeRestart, WebhookActionTypeRedeploy:
 			return normalizedActionType, nil
 		}
 	case WebhookTargetTypeGitOps:
@@ -391,10 +365,7 @@ func (s *WebhookService) CreateWebhook(
 
 	targetRef := ""
 
-	// The updater target type operates environment-wide and has no specific target resource.
-	if targetType == WebhookTargetTypeUpdater {
-		targetID = ""
-	} else if strings.TrimSpace(targetID) == "" {
+	if strings.TrimSpace(targetID) == "" {
 		return nil, "", ErrWebhookMissingTarget
 	}
 	if targetType == WebhookTargetTypeGitOps {
@@ -577,8 +548,6 @@ func (s *WebhookService) resolveWebhookTargetName(ctx context.Context, wh *Webho
 			return ""
 		}
 		return localProject.Name
-	case WebhookTargetTypeUpdater:
-		return "Environment updater"
 	case WebhookTargetTypeGitOps:
 		var localSync project.GitOpsSync
 		if err := s.db.WithContext(ctx).
@@ -763,7 +732,7 @@ func (s *WebhookService) TriggerByToken(ctx context.Context, rawToken string) er
 				slog.ErrorContext(execCtx, "webhook action panicked", "webhookId", wh.ID, "webhookName", wh.Name, "actionType", actionType, "error", panicErr)
 			}
 		}()
-		if _, executeWebhookActionErr := s.executeWebhookAction(execCtx, wh, actionType); executeWebhookActionErr != nil {
+		if executeWebhookActionErr := s.executeWebhookAction(execCtx, wh, actionType); executeWebhookActionErr != nil {
 			// Action failures are recorded as error events by wrapWebhookActionError.
 			slog.ErrorContext(execCtx, "webhook action failed", "webhookId", wh.ID, "webhookName", wh.Name, "actionType", actionType, "error", executeWebhookActionErr)
 			return
@@ -780,7 +749,7 @@ func (s *WebhookService) DrainActions(ctx context.Context) error {
 	return concurrency.WaitGroup(ctx, &s.actions)
 }
 
-func (s *WebhookService) executeWebhookAction(ctx context.Context, wh *Webhook, actionType string) (*types.UpdaterResult, error) {
+func (s *WebhookService) executeWebhookAction(ctx context.Context, wh *Webhook, actionType string) error {
 	// Webhooks are stored and triggered on the manager; actions against remote
 	// environments are forwarded through the environment proxy.
 	if wh.EnvironmentID != "" && wh.EnvironmentID != types.LocalDockerEnvironmentID {
@@ -792,118 +761,91 @@ func (s *WebhookService) executeWebhookAction(ctx context.Context, wh *Webhook, 
 		return s.executeContainerWebhookAction(ctx, wh, actionType)
 	case WebhookTargetTypeProject:
 		return s.executeProjectWebhookAction(ctx, wh, actionType)
-	case WebhookTargetTypeUpdater:
-		return s.executeUpdaterWebhookAction(ctx, wh, actionType)
 	case WebhookTargetTypeGitOps:
 		return s.executeGitOpsWebhookAction(ctx, wh, actionType)
 	default:
-		return nil, ErrWebhookInvalidType
+		return ErrWebhookInvalidType
 	}
 }
 
-func remoteWebhookRequest(wh *Webhook, actionType string) (method, path string, wantResult bool, err error) {
+func remoteWebhookRequest(wh *Webhook, actionType string) (method, path string, err error) {
 	apiPrefix := "/api/agents/" + types.LocalDockerEnvironmentID
 
 	switch wh.TargetType {
 	case WebhookTargetTypeContainer:
 		ref := cmp.Or(strings.TrimSpace(wh.TargetRef), strings.TrimSpace(wh.TargetID))
 		if ref == "" {
-			return "", "", false, ErrWebhookMissingTarget
+			return "", "", ErrWebhookMissingTarget
 		}
 		containerPath := apiPrefix + "/containers/" + url.PathEscape(ref)
 		switch actionType {
-		case WebhookActionTypeUpdate:
-			return http.MethodPost, containerPath + "/update", true, nil
 		case WebhookActionTypeStart, WebhookActionTypeStop, WebhookActionTypeRestart:
-			return http.MethodPost, containerPath + "?action=" + actionType, false, nil
+			return http.MethodPost, containerPath + "?action=" + actionType, nil
 		case WebhookActionTypeRedeploy:
-			return http.MethodPost, containerPath + "/redeploy", false, nil
+			return http.MethodPost, containerPath + "/redeploy", nil
 		}
-		return "", "", false, ErrWebhookInvalidAction
+		return "", "", ErrWebhookInvalidAction
 	case WebhookTargetTypeProject:
 		projectPath := apiPrefix + "/projects/" + url.PathEscape(wh.TargetID)
 		switch actionType {
-		case WebhookActionTypeUpdate:
-			return http.MethodPost, projectPath + "?action=updateservices", false, nil
 		case WebhookActionTypeDown, WebhookActionTypeRestart:
-			return http.MethodPost, projectPath + "?action=" + actionType, false, nil
+			return http.MethodPost, projectPath + "?action=" + actionType, nil
 		case WebhookActionTypeUp, WebhookActionTypeRedeploy:
-			return http.MethodPost, projectPath + "/deploy?action=" + actionType, false, nil
+			return http.MethodPost, projectPath + "/deploy?action=" + actionType, nil
 		}
-		return "", "", false, ErrWebhookInvalidAction
-	case WebhookTargetTypeUpdater:
-		if actionType != WebhookActionTypeRun {
-			return "", "", false, ErrWebhookInvalidAction
-		}
-		return http.MethodPost, apiPrefix + "/updater/run?automatic=true", true, nil
+		return "", "", ErrWebhookInvalidAction
 	case WebhookTargetTypeGitOps:
 		if actionType != WebhookActionTypeSync {
-			return "", "", false, ErrWebhookInvalidAction
+			return "", "", ErrWebhookInvalidAction
 		}
-		return http.MethodPost, apiPrefix + "/gitops/syncs/" + url.PathEscape(wh.TargetID) + "?action=sync", false, nil
+		return http.MethodPost, apiPrefix + "/gitops/syncs/" + url.PathEscape(wh.TargetID) + "?action=sync", nil
 	default:
-		return "", "", false, ErrWebhookInvalidType
+		return "", "", ErrWebhookInvalidType
 	}
 }
 
-func (s *WebhookService) executeRemoteWebhookAction(ctx context.Context, wh *Webhook, actionType string) (*types.UpdaterResult, error) {
-	method, path, wantResult, err := remoteWebhookRequest(wh, actionType)
+func (s *WebhookService) executeRemoteWebhookAction(ctx context.Context, wh *Webhook, actionType string) error {
+	method, path, err := remoteWebhookRequest(wh, actionType)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var result *types.UpdaterResult
-	if wantResult {
-		var out types.ApiResponse[*types.UpdaterResult]
-		if proxyJSONRequestErr := s.environmentService.ProxyJSONRequest(ctx, wh.EnvironmentID, method, path, nil, &out); proxyJSONRequestErr != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, wh.TargetType, actionType, proxyJSONRequestErr)
-		}
-		result = out.Data
-	} else {
-		var out types.ApiResponse[any]
-		if proxyServiceActionErr := s.environmentService.ProxyJSONRequest(ctx, wh.EnvironmentID, method, path, nil, &out); proxyServiceActionErr != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, wh.TargetType, actionType, proxyServiceActionErr)
-		}
+	var out types.ApiResponse[any]
+	if proxyErr := s.environmentService.ProxyJSONRequest(ctx, wh.EnvironmentID, method, path, nil, &out); proxyErr != nil {
+		return s.wrapWebhookActionError(ctx, wh, wh.TargetType, actionType, proxyErr)
 	}
-
-	return result, nil
+	return nil
 }
 
-func (s *WebhookService) executeContainerWebhookAction(ctx context.Context, wh *Webhook, actionType string) (*types.UpdaterResult, error) {
+func (s *WebhookService) executeContainerWebhookAction(ctx context.Context, wh *Webhook, actionType string) error {
 	containerID, err := s.resolveContainerWebhookTargetID(ctx, wh)
 	if err != nil {
-		return nil, s.wrapWebhookActionError(ctx, wh, "container", actionType, err)
+		return s.wrapWebhookActionError(ctx, wh, "container", actionType, err)
 	}
 
 	switch actionType {
-	case WebhookActionTypeUpdate:
-		result, updateSingleContainerErr := s.updaterService.UpdateSingleContainer(ctx, containerID)
-		if updateSingleContainerErr != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "container", actionType, updateSingleContainerErr)
-		}
-		return result, nil
 	case WebhookActionTypeStart:
 		if startContainerErr := s.containerService.StartContainer(ctx, containerID, types.SystemUser); startContainerErr != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "container", actionType, startContainerErr)
+			return s.wrapWebhookActionError(ctx, wh, "container", actionType, startContainerErr)
 		}
-		return nil, nil
+		return nil
 	case WebhookActionTypeStop:
 		if stopContainerErr := s.containerService.StopContainer(ctx, containerID, types.SystemUser); stopContainerErr != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "container", actionType, stopContainerErr)
+			return s.wrapWebhookActionError(ctx, wh, "container", actionType, stopContainerErr)
 		}
-		return nil, nil
+		return nil
 	case WebhookActionTypeRestart:
 		if restartContainerErr := s.containerService.RestartContainer(ctx, containerID, types.SystemUser); restartContainerErr != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "container", actionType, restartContainerErr)
+			return s.wrapWebhookActionError(ctx, wh, "container", actionType, restartContainerErr)
 		}
-		return nil, nil
+		return nil
 	case WebhookActionTypeRedeploy:
 		if _, redeployContainerErr := s.containerService.RedeployContainer(ctx, containerID, types.SystemUser); redeployContainerErr != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "container", actionType, redeployContainerErr)
+			return s.wrapWebhookActionError(ctx, wh, "container", actionType, redeployContainerErr)
 		}
-		return nil, nil
+		return nil
 	default:
-		return nil, ErrWebhookInvalidAction
+		return ErrWebhookInvalidAction
 	}
 }
 
@@ -961,57 +903,36 @@ func (s *WebhookService) syncWebhookContainerTarget(ctx context.Context, wh *Web
 	_ = s.db.WithContext(ctx).Model(wh).Updates(updates).Error
 }
 
-func (s *WebhookService) executeProjectWebhookAction(ctx context.Context, wh *Webhook, actionType string) (*types.UpdaterResult, error) {
+func (s *WebhookService) executeProjectWebhookAction(ctx context.Context, wh *Webhook, actionType string) error {
 	switch actionType {
-	case WebhookActionTypeUpdate:
-		if err := s.projectService.UpdateProjectServices(ctx, wh.TargetID, project.ServiceUpdateOptions{
-			User:         types.SystemUser,
-			DiscoverTags: true,
-		}); err != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "project", actionType, err)
-		}
-		return nil, nil
 	case WebhookActionTypeUp:
 		if err := s.projectService.DeployProject(ctx, wh.TargetID, types.SystemUser, nil); err != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "project", actionType, err)
+			return s.wrapWebhookActionError(ctx, wh, "project", actionType, err)
 		}
-		return nil, nil
+		return nil
 	case WebhookActionTypeDown:
 		if err := s.projectService.DownProject(ctx, wh.TargetID, types.SystemUser); err != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "project", actionType, err)
+			return s.wrapWebhookActionError(ctx, wh, "project", actionType, err)
 		}
-		return nil, nil
+		return nil
 	case WebhookActionTypeRestart:
 		if err := s.projectService.RestartProject(ctx, wh.TargetID, nil, types.SystemUser); err != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "project", actionType, err)
+			return s.wrapWebhookActionError(ctx, wh, "project", actionType, err)
 		}
-		return nil, nil
+		return nil
 	case WebhookActionTypeRedeploy:
 		if err := s.projectService.RedeployProject(ctx, wh.TargetID, types.SystemUser, nil); err != nil {
-			return nil, s.wrapWebhookActionError(ctx, wh, "project", actionType, err)
+			return s.wrapWebhookActionError(ctx, wh, "project", actionType, err)
 		}
-		return nil, nil
+		return nil
 	default:
-		return nil, ErrWebhookInvalidAction
+		return ErrWebhookInvalidAction
 	}
 }
 
-func (s *WebhookService) executeUpdaterWebhookAction(ctx context.Context, wh *Webhook, actionType string) (*types.UpdaterResult, error) {
-	if actionType != WebhookActionTypeRun {
-		return nil, ErrWebhookInvalidAction
-	}
-
-	result, err := s.updaterService.ApplyPending(ctx, types.UpdaterOptions{})
-	if err != nil {
-		return nil, s.wrapWebhookActionError(ctx, wh, "updater", actionType, err)
-	}
-
-	return result, nil
-}
-
-func (s *WebhookService) executeGitOpsWebhookAction(ctx context.Context, wh *Webhook, actionType string) (*types.UpdaterResult, error) {
+func (s *WebhookService) executeGitOpsWebhookAction(ctx context.Context, wh *Webhook, actionType string) error {
 	if actionType != WebhookActionTypeSync {
-		return nil, ErrWebhookInvalidAction
+		return ErrWebhookInvalidAction
 	}
 
 	if _, err := s.gitOpsSyncService.PerformSync(ctx, gitops.SyncRequest{
@@ -1019,10 +940,10 @@ func (s *WebhookService) executeGitOpsWebhookAction(ctx context.Context, wh *Web
 		SyncID:        wh.TargetID,
 		Actor:         types.SystemUser,
 	}); err != nil {
-		return nil, s.wrapWebhookActionError(ctx, wh, "gitops", actionType, err)
+		return s.wrapWebhookActionError(ctx, wh, "gitops", actionType, err)
 	}
 
-	return nil, nil
+	return nil
 }
 
 func (s *WebhookService) wrapWebhookActionError(ctx context.Context, wh *Webhook, targetKind, actionType string, err error) error {

@@ -5,32 +5,34 @@
 	import * as Select from '#lib/components/ui/select/index.js';
 	import { CloseIcon } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
-	import type { Environment } from '#lib/types/environment.js';
+	import type { Environment, EnvironmentGroupRef } from '#lib/types/environment.js';
 	import {
 		type Role,
+		type UserRoleAssignmentInput,
 		BUILT_IN_ROLE_ADMIN,
 		BUILT_IN_ROLE_EDITOR,
 		BUILT_IN_ROLE_DEPLOYER,
 		BUILT_IN_ROLE_VIEWER
 	} from '#lib/types/role.js';
 	import {
-		buildGlobalEnvironmentOptions,
+		buildRoleScopeOptions,
 		createRoleEnvironmentLabelers,
-		GLOBAL_ENVIRONMENT_OPTION_ID
+		GLOBAL_ENVIRONMENT_OPTION_ID,
+		roleScopeFromOptionId,
+		roleScopeOptionId
 	} from '#lib/utils/options.js';
 
-	type Assignment = { roleId: string; environmentId?: string };
-
 	type Props = {
-		assignments: Assignment[];
+		assignments: UserRoleAssignmentInput[];
 		roles: Role[];
 		environments: Environment[];
+		groups: EnvironmentGroupRef[];
 		disabled?: boolean;
 	};
 
-	let { assignments = $bindable([]), roles, environments, disabled = false }: Props = $props();
+	let { assignments = $bindable([]), roles, environments, groups, disabled = false }: Props = $props();
 
-	const envOptions = $derived(buildGlobalEnvironmentOptions(environments, m.global_org_wide()));
+	const envOptions = $derived(buildRoleScopeOptions(environments, groups));
 	const selectedLabel = $derived(createRoleEnvironmentLabelers(roles, envOptions, m.common_select_option()));
 
 	const quickPresetRoles = $derived(roles.filter((role) => role.id === BUILT_IN_ROLE_EDITOR || role.id === BUILT_IN_ROLE_ADMIN));
@@ -61,23 +63,19 @@
 		}
 	}
 
-	function envIdToSelectValue(envId: string | undefined): string {
-		return envId ?? GLOBAL_ENVIRONMENT_OPTION_ID;
-	}
-
-	function selectValueToEnvId(value: string): string | undefined {
-		return value === GLOBAL_ENVIRONMENT_OPTION_ID ? undefined : value;
-	}
-
 	function isEnvTaken(envValue: string, roleId: string, currentIndex: number): boolean {
 		return assignments.some((a, i) => {
 			if (i === currentIndex) return false;
 			if (a.roleId !== roleId) return false;
-			return envIdToSelectValue(a.environmentId) === envValue;
+			return roleScopeOptionId(a) === envValue;
 		});
 	}
 
-	function updateAssignment(index: number, patch: Partial<Assignment>) {
+	function isGlobal(assignment: UserRoleAssignmentInput): boolean {
+		return roleScopeOptionId(assignment) === GLOBAL_ENVIRONMENT_OPTION_ID;
+	}
+
+	function updateAssignment(index: number, patch: Partial<UserRoleAssignmentInput>) {
 		const row = assignments[index];
 		if (disabled || !row) return;
 		// Mutate in place so the row keeps its identity, which the {#each} key relies on.
@@ -89,7 +87,7 @@
 		const defaultRoleId = roles[0]?.id ?? '';
 		const freeEnv = envOptions.find((option) => !isEnvTaken(option.id, defaultRoleId, -1));
 		const envValue = freeEnv?.id ?? GLOBAL_ENVIRONMENT_OPTION_ID;
-		assignments = [...assignments, { roleId: defaultRoleId, environmentId: selectValueToEnvId(envValue) }];
+		assignments = [...assignments, { roleId: defaultRoleId, ...roleScopeFromOptionId(envValue) }];
 	}
 
 	function removeAssignment(index: number) {
@@ -98,7 +96,7 @@
 	}
 
 	function hasGlobalRoleAssignment(roleId: string): boolean {
-		return assignments.some((assignment) => assignment.roleId === roleId && !assignment.environmentId);
+		return assignments.some((assignment) => assignment.roleId === roleId && isGlobal(assignment));
 	}
 
 	function toggleQuickPreset(roleId: string, checked: boolean) {
@@ -107,13 +105,13 @@
 		let next = assignments;
 		if (checked) {
 			if (conflictingRoleId) {
-				next = next.filter((assignment) => !(assignment.roleId === conflictingRoleId && !assignment.environmentId));
+				next = next.filter((assignment) => !(assignment.roleId === conflictingRoleId && isGlobal(assignment)));
 			}
-			if (!next.some((assignment) => assignment.roleId === roleId && !assignment.environmentId)) {
-				next = [...next, { roleId, environmentId: undefined }];
+			if (!hasGlobalRoleAssignment(roleId)) {
+				next = [...next, { roleId }];
 			}
 		} else {
-			next = next.filter((assignment) => !(assignment.roleId === roleId && !assignment.environmentId));
+			next = next.filter((assignment) => !(assignment.roleId === roleId && isGlobal(assignment)));
 		}
 		assignments = next;
 	}
@@ -150,7 +148,7 @@
 	{/if}
 
 	{#each assignments as assignment, index (assignment)}
-		{@const envValue = envIdToSelectValue(assignment.environmentId)}
+		{@const envValue = roleScopeOptionId(assignment)}
 		<div
 			class="grid grid-cols-1 gap-2 rounded-md border border-border/70 bg-card/10 p-3 sm:grid-cols-halves-action sm:items-center"
 		>
@@ -158,9 +156,9 @@
 				type="single"
 				value={envValue}
 				{disabled}
-				onValueChange={(v) => updateAssignment(index, { environmentId: selectValueToEnvId(v) })}
+				onValueChange={(v) => updateAssignment(index, roleScopeFromOptionId(v))}
 			>
-				<Select.Trigger class="w-full" aria-label={m.resource_environment_cap()}>
+				<Select.Trigger class="w-full" aria-label={m.common_scope()}>
 					<span class="min-w-0 truncate">{selectedLabel.environment(envValue)}</span>
 				</Select.Trigger>
 				<Select.Content>

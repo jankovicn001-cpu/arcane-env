@@ -6,6 +6,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"getarcane.dev/arcane/v3/internal/middleware"
+	"getarcane.dev/arcane/v3/internal/role/children/usergroup"
 	"getarcane.dev/arcane/v3/pkg/authz"
 	"getarcane.dev/arcane/v3/pkg/handlerutil"
 )
@@ -30,9 +31,11 @@ func (m *Module) Service() *RoleService {
 func (m *Module) RegisterRoutes(api huma.API) {
 	if m == nil {
 		RegisterRoles(api, nil)
+		usergroup.RegisterRoutes(api, usergroup.NewHandler(nil))
 		return
 	}
 	RegisterRoles(api, m.service)
+	usergroup.RegisterRoutes(api, usergroup.NewHandler(m.service.userGroups))
 }
 
 func RegisterRoles(api huma.API, roleService *RoleService) {
@@ -116,4 +119,34 @@ func RegisterRoles(api huma.API, roleService *RoleService) {
 		Tags:        []string{"Roles"},
 		Security:    handlerutil.DefaultOperationSecurity(),
 	}), h.SetUserRoleAssignments)
+
+	huma.Register(api, middleware.RequireGlobalAdmin(api, huma.Operation{
+		OperationID: "list-environment-group-role-assignments",
+		Method:      http.MethodGet,
+		Path:        "/environment-groups/{id}/role-assignments",
+		Summary:     "List access to an environment group",
+		Description: "Lists every role assignment (manual, OIDC and LDAP) and user group grant scoped to the environment group; users first by username, then groups by name. Reserved for global admins.",
+		Tags:        []string{"Roles"},
+		Security:    handlerutil.DefaultOperationSecurity(),
+	}), h.ListEnvironmentGroupAccess)
+
+	huma.Register(api, middleware.RequireGlobalAdmin(api, huma.Operation{
+		OperationID: "create-environment-group-role-assignment",
+		Method:      http.MethodPost,
+		Path:        "/environment-groups/{id}/role-assignments",
+		Summary:     "Grant access to an environment group",
+		Description: "Grants a user or a user group a role on every agent in the environment group; set exactly one of userId and userGroupId. Reserved for global admins.",
+		Tags:        []string{"Roles"},
+		Security:    handlerutil.DefaultOperationSecurity(),
+	}), h.GrantEnvironmentGroupAccess)
+
+	huma.Register(api, middleware.RequireGlobalAdmin(api, huma.Operation{
+		OperationID: "delete-environment-group-role-assignment",
+		Method:      http.MethodDelete,
+		Path:        "/environment-groups/{id}/role-assignments/{assignmentId}",
+		Summary:     "Revoke access to an environment group",
+		Description: "Removes a manual user assignment or a user group grant scoped to the environment group. Synced user assignments are rejected. Reserved for global admins.",
+		Tags:        []string{"Roles"},
+		Security:    handlerutil.DefaultOperationSecurity(),
+	}), h.RevokeEnvironmentGroupAccess)
 }

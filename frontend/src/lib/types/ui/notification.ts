@@ -29,8 +29,6 @@ export type NotificationProviderKey = (typeof NOTIFICATION_PROVIDER_KEYS)[number
 
 export interface BaseProviderFormValues {
 	enabled: boolean;
-	eventImageUpdate: boolean;
-	eventContainerUpdate: boolean;
 	eventVulnerabilityFound: boolean;
 	eventPruneReport: boolean;
 	eventAutoHeal: boolean;
@@ -164,9 +162,7 @@ export type ProviderFormValuesMap = {
 };
 
 type ProviderConfig = Record<string, unknown>;
-type ProviderEvents = Partial<
-	Record<'image_update' | 'container_update' | 'vulnerability_found' | 'prune_report' | 'auto_heal', boolean>
->;
+type ProviderEvents = Partial<Record<'vulnerability_found' | 'prune_report' | 'auto_heal', boolean>>;
 
 function getConfig(settings?: NotificationSettings): ProviderConfig {
 	return (settings?.config ?? {}) as ProviderConfig;
@@ -206,13 +202,8 @@ function getStringRecord(config: ProviderConfig, key: string): Record<string, st
 
 function eventFlagsToFormValues(
 	events: ProviderEvents
-): Pick<
-	BaseProviderFormValues,
-	'eventImageUpdate' | 'eventContainerUpdate' | 'eventVulnerabilityFound' | 'eventPruneReport' | 'eventAutoHeal'
-> {
+): Pick<BaseProviderFormValues, 'eventVulnerabilityFound' | 'eventPruneReport' | 'eventAutoHeal'> {
 	return {
-		eventImageUpdate: events['image_update'] ?? true,
-		eventContainerUpdate: events['container_update'] ?? true,
 		eventVulnerabilityFound: events['vulnerability_found'] ?? true,
 		eventPruneReport: events['prune_report'] ?? true,
 		eventAutoHeal: events['auto_heal'] ?? true
@@ -221,8 +212,6 @@ function eventFlagsToFormValues(
 
 function formValuesToEventFlags(values: BaseProviderFormValues): ProviderEvents {
 	return {
-		image_update: values.eventImageUpdate,
-		container_update: values.eventContainerUpdate,
 		vulnerability_found: values.eventVulnerabilityFound,
 		prune_report: values.eventPruneReport,
 		auto_heal: values.eventAutoHeal

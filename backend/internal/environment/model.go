@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"getarcane.dev/arcane/v3/internal/database"
+	"getarcane.dev/arcane/v3/internal/environment/children/group"
 )
 
 type (
@@ -17,6 +18,9 @@ type (
 		ParentEnvironmentID   *string    `json:"-" gorm:"column:parent_environment_id"`
 		SwarmNodeID           *string    `json:"-" gorm:"column:swarm_node_id"`
 		EnrollmentRequestHash *string    `json:"-" gorm:"column:enrollment_request_hash"`
+		GroupID               *string    `json:"groupId,omitempty" gorm:"column:group_id"`
+		// Group is read-only; writes go through GroupID.
+		Group *group.Group `json:"-" gorm:"foreignKey:GroupID;constraint:OnDelete:SET NULL"`
 
 		Name    string `json:"name" sortable:"true" unorm:"nfc" trim:"true"`
 		ApiUrl  string `json:"apiUrl" gorm:"column:api_url" sortable:"true"`

@@ -112,6 +112,16 @@ func newTestEnv(t *testing.T, fake *fakeDirectory, overrides map[string]string) 
 	))
 	require.NoError(t, gormDB.Exec("CREATE UNIQUE INDEX idx_users_username_unique ON users(username)").Error)
 	require.NoError(t, gormDB.Exec("CREATE TABLE IF NOT EXISTS environments (id text PRIMARY KEY)").Error)
+	// User group tables belong to a role child package; permission resolution only needs them to exist.
+	for _, ddl := range []string{
+		"CREATE TABLE IF NOT EXISTS user_groups (id text PRIMARY KEY, name text)",
+		"CREATE TABLE IF NOT EXISTS user_group_links (id text PRIMARY KEY, user_group_id text, kind text, value text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_members (id text PRIMARY KEY, user_group_id text, user_id text, source text, created_at datetime, updated_at datetime)",
+		"CREATE TABLE IF NOT EXISTS user_group_role_assignments " +
+			"(id text PRIMARY KEY, user_group_id text, role_id text, environment_id text, environment_group_id text, created_at datetime, updated_at datetime)",
+	} {
+		require.NoError(t, gormDB.Exec(ddl).Error)
+	}
 	db := &database.DB{DB: gormDB}
 
 	roles := role.NewRoleService(db)
@@ -290,9 +300,9 @@ func TestSyncAllReconcilesUsersAndRoles(t *testing.T) {
 		LastUsedAt:       time.Now(),
 		RefreshTokenHash: "missing-refresh",
 	}).Error)
-	_, err := env.roles.CreateOidcMapping(ctx, "admins", authz.BuiltInRoleAdmin, nil)
+	_, err := env.roles.CreateOidcMapping(ctx, types.OidcRoleMappingSpec{ClaimValue: "admins", RoleID: authz.BuiltInRoleAdmin})
 	require.NoError(t, err)
-	_, err = env.roles.CreateOidcMapping(ctx, "devs", authz.BuiltInRoleViewer, nil)
+	_, err = env.roles.CreateOidcMapping(ctx, types.OidcRoleMappingSpec{ClaimValue: "devs", RoleID: authz.BuiltInRoleViewer})
 	require.NoError(t, err)
 
 	require.NoError(t, env.service.SyncAll(ctx))
@@ -498,4 +508,55 @@ func TestAuthenticateBindsAsDirectoryUser(t *testing.T) {
 		})
 	}
 	assert.Contains(t, fake.filters, `(&(objectClass=person)(|(entryUUID=u-\28alice\29\2a)))`)
+}
+
+func TestSyncAllSyncsUserGroupMemberships(t *testing.T) {
+	fake := &fakeDirectory{
+		users: []*ldap.Entry{
+			entry("uid=alice,ou=people,dc=example,dc=com", map[string][]string{"entryUUID": {"u-alice"}, "uid": {"alice"}}),
+			entry("uid=bob,ou=people,dc=example,dc=com", map[string][]string{"entryUUID": {"u-bob"}, "uid": {"bob"}}),
+		},
+		groups: []*ldap.Entry{
+			entry("cn=ops,ou=groups,dc=example,dc=com", map[string][]string{"cn": {"ops"}, "member": {"uid=alice,ou=people,dc=example,dc=com"}}),
+			entry("cn=devs,ou=groups,dc=example,dc=com", map[string][]string{"cn": {"devs"}, "member": {"uid=alice,ou=people,dc=example,dc=com", "uid=bob,ou=people,dc=example,dc=com"}}),
+		},
+	}
+	env := newTestEnv(t, fake, nil)
+	ctx := t.Context()
+	env.createUser(t, user.User{BaseModel: database.BaseModel{ID: "root"}, Username: "root"})
+	require.NoError(t, env.roles.ReplaceUserAssignments(ctx, "root", role.RoleAssignmentSourceManual, []role.UserRoleAssignment{{RoleID: authz.BuiltInRoleAdmin}}))
+	env.createUser(t, user.User{BaseModel: database.BaseModel{ID: "bob-id"}, Username: "bob", LdapID: new("u-bob")})
+	require.NoError(t, env.db.Exec(`INSERT INTO user_groups (id, name) VALUES ('ops', 'Ops'), ('devs', 'Devs'), ('sso', 'SSO')`).Error)
+	require.NoError(t, env.db.Exec(`INSERT INTO user_group_links (id, user_group_id, kind, value) VALUES
+		('l1', 'ops', 'ldap', 'ops'), ('l2', 'devs', 'ldap', 'devs'), ('l3', 'sso', 'oidc', 'devs')`).Error)
+	require.NoError(t, env.db.Exec(`INSERT INTO user_group_members (id, user_group_id, user_id, source) VALUES ('manual', 'ops', 'bob-id', 'manual')`).Error)
+	groupsOf := func(userID string) []string {
+		t.Helper()
+		refs, err := env.roles.UserGroupRefs(ctx, userID)
+		require.NoError(t, err)
+		names := make([]string, len(refs))
+		for i, ref := range refs {
+			names[i] = ref.Name
+		}
+		return names
+	}
+
+	require.NoError(t, env.service.SyncAll(ctx))
+	alice := env.findUser(t, "ldap_id = ?", "u-alice")
+	assert.Equal(t, []string{"Devs", "Ops"}, groupsOf(alice.ID), "LDAP groups join only user groups with matching ldap links")
+	assert.Equal(t, []string{"Devs", "Ops"}, groupsOf("bob-id"))
+	assert.Contains(t, env.recorder.invalidated, "bob-id")
+
+	fake.groups = fake.groups[:1]
+	require.NoError(t, env.service.SyncAll(ctx))
+	assert.Equal(t, []string{"Ops"}, groupsOf(alice.ID), "leaving a directory group removes the synced membership")
+	assert.Equal(t, []string{"Ops"}, groupsOf("bob-id"), "manual memberships are untouched")
+
+	fake.users = fake.users[1:]
+	fake.groups = []*ldap.Entry{
+		entry("cn=ops,ou=groups,dc=example,dc=com", map[string][]string{"cn": {"ops"}, "member": {"uid=bob,ou=people,dc=example,dc=com"}}),
+	}
+	require.NoError(t, env.service.SyncAll(ctx))
+	assert.True(t, env.findUser(t, "id = ?", alice.ID).Disabled)
+	assert.Empty(t, groupsOf(alice.ID), "a disabled LDAP user loses synced memberships")
 }

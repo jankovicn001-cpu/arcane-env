@@ -293,57 +293,6 @@ type (
 		GPUCount     int        `json:"gpuCount"`
 	}
 
-	UpgradeCheckResult struct {
-		Message            string                                `json:"message"`
-		Environments       []EnvironmentData[UpgradeCheckResult] `json:"environments,omitempty" doc:"Per-environment upgrade checks behind a multi-environment response"`
-		FailedEnvironments []EnvironmentFailure                  `json:"failedEnvironments,omitempty" doc:"Environments whose results are missing from a multi-environment response"`
-		CanUpgrade         bool                                  `json:"canUpgrade"`
-		Error              bool                                  `json:"error"`
-	}
-
-	UpgradeJobResult struct {
-		StageStartedAt  *time.Time `json:"stageStartedAt,omitempty"`
-		EnvironmentID   string     `json:"environmentId"`
-		EnvironmentName string     `json:"environmentName"`
-		Status          string     `json:"status"`
-		FromVersion     string     `json:"fromVersion,omitempty"`
-		FromDigest      string     `json:"fromDigest,omitempty"`
-		ToVersion       string     `json:"toVersion,omitempty"`
-		Stage           string     `json:"stage,omitempty"`
-		Error           string     `json:"error,omitempty"`
-		Logs            []string   `json:"logs,omitempty"`
-		Percent         int        `json:"percent"`
-	}
-
-	UpgradeJob struct {
-		CreatedAt             time.Time          `json:"createdAt" sortable:"true"`
-		UpdatedAt             *time.Time         `json:"updatedAt,omitempty"`
-		Error                 *string            `json:"error,omitempty"`
-		CompletedAt           *time.Time         `json:"completedAt,omitempty"`
-		ID                    string             `json:"id"`
-		Status                string             `json:"status"`
-		UserID                string             `json:"userId"`
-		Username              string             `json:"username"`
-		ManagerVersionAtStart string             `json:"managerVersionAtStart"`
-		ManagerDigestAtStart  string             `json:"managerDigestAtStart"`
-		ManagerTargetVersion  string             `json:"managerTargetVersion"`
-		Results               []UpgradeJobResult `json:"results,omitempty"`
-	}
-
-	StartUpgradeJobRequest struct {
-		EnvironmentIDs []string `json:"environmentIds,omitempty" doc:"Environments to upgrade; empty upgrades every enabled environment"`
-	}
-
-	UpgradeProgressEvent struct {
-		At          time.Time `json:"at"`
-		Type        string    `json:"type" enum:"stage,progress,log,done"`
-		Message     string    `json:"message,omitempty"`
-		FromVersion string    `json:"fromVersion,omitempty"`
-		ToVersion   string    `json:"toVersion,omitempty"`
-		Percent     int       `json:"percent"`
-		Replay      bool      `json:"replay,omitempty"`
-	}
-
 	WebSocketConnectionInfo struct {
 		StartedAt  time.Time `json:"startedAt"`
 		ID         string    `json:"id"`
@@ -384,11 +333,6 @@ const (
 	PruneBuildCacheModeUnused    PruneBuildCacheMode = "unused"
 	PruneBuildCacheModeAll       PruneBuildCacheMode = "all"
 	PruneBuildCacheModeOlderThan PruneBuildCacheMode = "olderThan"
-
-	UpgradeProgressEventStage    = "stage"
-	UpgradeProgressEventProgress = "progress"
-	UpgradeProgressEventLog      = "log"
-	UpgradeProgressEventDone     = "done"
 
 	WSKindProjectLogs    = "project_logs"
 	WSKindContainerLogs  = "container_logs"

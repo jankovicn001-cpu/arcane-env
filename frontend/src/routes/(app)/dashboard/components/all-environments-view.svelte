@@ -23,7 +23,6 @@
 		dashboardImageCountsQuery,
 		dashboardJobsQuery,
 		dashboardPodmanStatusQuery,
-		dashboardProjectCountsQuery,
 		dashboardRecentEventsQuery,
 		dashboardRiskQuery,
 		dashboardVersionsQuery,
@@ -48,7 +47,7 @@
 	import { cn } from '#lib/utils.js';
 	import { activityToastOptions, extractActivityId } from '#lib/utils/activity-toast.js';
 	import { extractApiErrorMessage, handleApiResultWithCallbacks } from '#lib/utils/api.js';
-	import { hasAnyPermission, hasPermission } from '#lib/utils/auth.js';
+	import { hasAnyPermission } from '#lib/utils/auth.js';
 	import {
 		addDashboardWidget,
 		DASHBOARD_WIDGET_TYPES,
@@ -71,14 +70,12 @@
 		createBaseEnvironmentOverview,
 		shouldLoadEnvironment,
 		totalReclaimableBytes,
-		type AttentionItem,
 		type EnvironmentJob
 	} from '../overview.helpers';
 	import ActivityList from './activity-list.svelte';
 	import AttentionList from './attention-list.svelte';
 	import DashboardPanel from './dashboard-panel.svelte';
 	import EnvironmentCard from './environment-card.svelte';
-	import EnvironmentUpgradeAction from './environment-upgrade-action.svelte';
 	import EnvironmentsTable, { type EnvironmentTableRow } from './environments-table.svelte';
 	import ReclaimableSpace from './reclaimable-space.svelte';
 	import StatWidget from './stat-widget.svelte';
@@ -88,27 +85,7 @@
 	import CustomWidget from './widgets/custom-widget.svelte';
 	import WidgetSheet from './widgets/widget-sheet.svelte';
 
-	let {
-		heroGreeting,
-		debugUpgrade = false
-	}: {
-		heroGreeting: string;
-		debugUpgrade?: boolean;
-	} = $props();
-
-	const DEBUG_VERSION_INFO: VersionInfo = {
-		currentVersion: 'debug',
-		displayVersion: 'debug',
-		revision: 'debug',
-		shortRevision: 'debug',
-		goVersion: '',
-		nodeVersion: '',
-		svelteKitVersion: '',
-		isSemverVersion: false,
-		isStableVersion: false,
-		newestVersion: 'debug-v2',
-		updateAvailable: true
-	};
+	let { heroGreeting }: { heroGreeting: string } = $props();
 
 	const EXPIRING_API_KEYS = { pagination: { page: 1, limit: -1 }, filters: { expiresWithinDays: 14 } };
 	const TOP_MEMORY_REQUEST = {
@@ -131,8 +108,6 @@
 	let pruneDefaultsLoadingId = $state<string | null>(null);
 	let pruningEnvironmentId = $state<string | null>(null);
 	const liveStats = new DashboardLiveStats();
-	const upgradeDialogOpenById = $state<Record<string, boolean>>({});
-	const upgradeDialogUpgradingById = $state<Record<string, boolean>>({});
 
 	const availableEnvironments = $derived.by(() => {
 		if (!userStore.current) {
@@ -144,9 +119,6 @@
 
 	function canPruneInEnvironment(envId: string): boolean {
 		return hasAnyPermission(['images:prune', 'volumes:prune', 'networks:prune'], envId);
-	}
-	function canUpgradeEnvironment(envId: string): boolean {
-		return hasPermission('environments:update', envId);
 	}
 
 	const environmentCards = $derived.by((): DashboardEnvironmentCardState[] => {
@@ -185,11 +157,6 @@
 
 	const containersQuery = createQuery(() => ({
 		...dashboardContainerCountsQuery(loadableEnvironments('containers:list')),
-		placeholderData: keepPreviousData
-	}));
-
-	const projectsQuery = createQuery(() => ({
-		...dashboardProjectCountsQuery(loadableEnvironments('projects:list')),
 		placeholderData: keepPreviousData
 	}));
 
@@ -263,7 +230,6 @@
 
 	const environmentQueries = [
 		containersQuery,
-		projectsQuery,
 		imagesQuery,
 		vulnerabilitiesQuery,
 		podmanQuery,
@@ -276,7 +242,6 @@
 	];
 
 	const containersByEnvironment = $derived(byEnvironmentId(containersQuery.data));
-	const projectsByEnvironment = $derived(byEnvironmentId(projectsQuery.data));
 	const imagesByEnvironment = $derived(byEnvironmentId(imagesQuery.data));
 	const vulnerabilitiesByEnvironment = $derived(byEnvironmentId(vulnerabilitiesQuery.data));
 	const podmanByEnvironment = $derived(byEnvironmentId(podmanQuery.data));
@@ -312,7 +277,6 @@
 
 	function buildEnvironmentOverview(environment: Environment): DashboardEnvironmentOverview {
 		const containers = containersByEnvironment.get(environment.id) ?? EMPTY_CONTAINER_COUNTS;
-		const updates = containers.updatesAvailable + (projectsByEnvironment.get(environment.id)?.updatesAvailable ?? 0);
 		const vulnerabilities = vulnerabilitiesByEnvironment.get(environment.id)?.actionableCount ?? 0;
 		const podman = podmanByEnvironment.get(environment.id);
 		const versionInfo = versionsByEnvironment.get(environment.id);
@@ -321,7 +285,6 @@
 			environment,
 			containers,
 			imageUsageCounts: imagesByEnvironment.get(environment.id) ?? EMPTY_IMAGE_COUNTS,
-			updates,
 			vulnerabilities,
 			versionInfo: isVersionInformation(versionInfo) ? versionInfo : undefined,
 			podCount: podman?.detected ? podman.podCount : undefined,
@@ -441,12 +404,6 @@
 			jobs: environmentJobs,
 			activityGroups,
 			expiringApiKeys,
-			versions: new Map(
-				[...overviewById.values()].flatMap((item) => (item.versionInfo ? [[item.environment.id, item.versionInfo] as const] : []))
-			),
-			upgradable: new Set(
-				environmentCards.map(({ environment }) => environment.id).filter((environmentId) => canUpgradeEnvironment(environmentId))
-			),
 			now: Temporal.Now.instant()
 		})
 	);
@@ -455,9 +412,7 @@
 		const shown = new Set(attentionItems.map((item) => item.activityKey));
 		return activityGroups.filter((group) => !shown.has(group.key));
 	});
-	const attentionFailed = $derived(
-		[containersQuery, eventsQuery, riskQuery, jobsQuery, versionsQuery].some((query) => query.isError)
-	);
+	const attentionFailed = $derived([containersQuery, eventsQuery, riskQuery, jobsQuery].some((query) => query.isError));
 	const attentionCountByEnvironment = $derived(
 		attentionItems.reduce(
 			(counts, item) => counts.set(item.environmentId, (counts.get(item.environmentId) ?? 0) + 1),
@@ -480,11 +435,9 @@
 					total: loadedItem.containers.totalContainers,
 					images: loadedItem.imageUsageCounts.totalImages,
 					podCount: loadedItem.podCount ?? null,
-					updates: loadedItem.updates,
 					reclaimable: diskUsageEntry ? totalReclaimableBytes(diskUsageEntry) : null,
 					risk: risk ? { score: risk.riskScore, band: risk.riskBand, status: risk.scoreStatus } : null,
 					versionText: vInfo ? vInfo.displayVersion || vInfo.currentTag || vInfo.currentVersion || 'unknown' : null,
-					updateAvailable: !!vInfo?.updateAvailable,
 					menuButtons: getEnvironmentActionButtons(loadedItem)
 				};
 			})
@@ -496,22 +449,10 @@
 			);
 	});
 
-	const updatesOverview = $derived({
-		pending: (containersQuery.data?.updatesAvailable ?? 0) + (projectsQuery.data?.updatesAvailable ?? 0),
-		upToDate: Math.max(0, (containersQuery.data?.totalContainers ?? 0) - (containersQuery.data?.updatesAvailable ?? 0)),
-		checking: loadableEnvironmentIds.size > 0 && (containersQuery.isPending || projectsQuery.isPending)
-	});
-
 	const offlineEnvironments = $derived(
 		environmentCards.filter(({ environment }) => !isEnvironmentOnline(environment)).map(({ environment }) => environment)
 	);
 	const diskUsage = $derived(diskUsageQuery.data?.byEnvironment ?? []);
-
-	function handleAttentionAction(item: AttentionItem) {
-		if (item.target.kind === 'upgrade') {
-			upgradeDialogOpenById[item.environmentId] = true;
-		}
-	}
 
 	const prunableEnvironments = $derived(
 		environmentCards
@@ -655,12 +596,6 @@
 			countsLoading={isEnvironmentCountsLoading(environment.id)}
 			attentionCount={attentionCountByEnvironment.get(environment.id) ?? 0}
 			menuButtons={getEnvironmentActionButtons(overview)}
-			{debugUpgrade}
-			debugVersionInfo={DEBUG_VERSION_INFO}
-			canUpgrade={canUpgradeEnvironment(environment.id)}
-			onRefreshRequested={refreshOverview}
-			bind:upgradeOpen={upgradeDialogOpenById[environment.id]}
-			bind:upgradeLoading={upgradeDialogUpgradingById[environment.id]}
 		/>
 
 		{#snippet failed(_renderError: unknown, reset: () => void)}
@@ -818,7 +753,7 @@
 		onConfigure={(widget) => widgetSheet?.show(widget)}
 	>
 		{#snippet widget(item)}
-			{#if item.type === 'healthy' || item.type === 'attentionCount' || item.type === 'updates' || item.type === 'risk' || item.type === 'reclaimableTotal'}
+			{#if item.type === 'healthy' || item.type === 'attentionCount' || item.type === 'risk' || item.type === 'reclaimableTotal'}
 				<StatWidget
 					id={item.type}
 					healthy={{
@@ -831,7 +766,6 @@
 						critical: attentionItems.filter((item) => item.severity === 'critical').length,
 						loading: boardSummaryLoading
 					}}
-					updates={updatesOverview}
 					risk={{
 						score: riskQuery.data && riskQuery.data.scoreStatus !== 'unavailable' ? riskQuery.data.riskScore : null,
 						delta: riskQuery.data?.delta7d,
@@ -886,12 +820,7 @@
 					{/if}
 				</DashboardPanel>
 			{:else if item.type === 'attention'}
-				<AttentionList
-					items={attentionItems}
-					loading={boardSummaryLoading}
-					failed={attentionFailed}
-					onAction={handleAttentionAction}
-				/>
+				<AttentionList items={attentionItems} loading={boardSummaryLoading} failed={attentionFailed} />
 			{:else if item.type === 'activity'}
 				<ActivityList groups={recentActivityGroups} loading={activityStore.loading} unavailable={activityStore.streamError} />
 			{:else if item.type === 'jobs'}
@@ -919,22 +848,6 @@
 		{/snippet}
 	</WidgetGrid>
 </div>
-
-{#each environmentCards as { environment } (environment.id)}
-	{@const versionInfo = overviewById.get(environment.id)?.versionInfo ?? (debugUpgrade ? DEBUG_VERSION_INFO : null)}
-	{#if versionInfo && (versionInfo.updateAvailable || debugUpgrade)}
-		<EnvironmentUpgradeAction
-			{environment}
-			{versionInfo}
-			canUpgrade={canUpgradeEnvironment(environment.id)}
-			debug={debugUpgrade}
-			onRefreshRequested={refreshOverview}
-			render="dialog"
-			bind:open={upgradeDialogOpenById[environment.id]}
-			bind:upgrading={upgradeDialogUpgradingById[environment.id]}
-		/>
-	{/if}
-{/each}
 
 <WidgetSheet
 	bind:this={widgetSheet}

@@ -8,6 +8,7 @@ import (
 
 	"getarcane.dev/arcane/v3/internal/apikey"
 	"getarcane.dev/arcane/v3/internal/config"
+	"getarcane.dev/arcane/v3/internal/environment/children/group"
 	"getarcane.dev/arcane/v3/internal/event"
 	"getarcane.dev/arcane/v3/internal/middleware"
 	"getarcane.dev/arcane/v3/internal/settings"
@@ -69,6 +70,7 @@ func (m *Module) Handler() *EnvironmentHandler {
 func (m *Module) RegisterRoutes(api huma.API, appCtx handlerutil.ActivityAppContext, localVersion func(context.Context) *types.VersionInfo) {
 	if m == nil {
 		RegisterEnvironments(api, NewHandler(HandlerParams{}))
+		group.RegisterRoutes(api, group.NewHandler(nil))
 		return
 	}
 	*m.handler = EnvironmentHandler{ //exhaustruct:enforce
@@ -86,6 +88,7 @@ func (m *Module) RegisterRoutes(api huma.API, appCtx handlerutil.ActivityAppCont
 		localVersion:       localVersion,
 	}
 	RegisterEnvironments(api, m.handler)
+	group.RegisterRoutes(api, group.NewHandler(m.service.groups))
 }
 
 func RegisterEnvironments(api huma.API, h *EnvironmentHandler) {

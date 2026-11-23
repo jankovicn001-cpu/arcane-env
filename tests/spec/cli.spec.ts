@@ -194,20 +194,6 @@ const readOnlyJsonCommands: JsonReadOnlyCommand[] = [
 		}
 	},
 	{
-		name: 'updater status',
-		args: ['updater', 'status', '--json'],
-		expectation: (value) => {
-			expect(value).toEqual(expect.objectContaining({ updatingContainers: expect.any(Number) }));
-		}
-	},
-	{
-		name: 'updater history',
-		args: ['updater', 'history', '--json'],
-		expectation: (value) => {
-			expect(value).toEqual(expect.any(Array));
-		}
-	},
-	{
 		name: 'registries list',
 		args: ['registries', 'list', '--json'],
 		expectation: expectPaginated
@@ -256,11 +242,6 @@ const readOnlyJsonCommands: JsonReadOnlyCommand[] = [
 	{
 		name: 'containers counts',
 		args: ['containers', 'counts', '--json'],
-		expectation: expectJsonValue
-	},
-	{
-		name: 'images updates summary',
-		args: ['images', 'updates', 'summary', '--json'],
 		expectation: expectJsonValue
 	},
 	{
@@ -404,14 +385,12 @@ test.describe('arcane-cli e2e', () => {
 			const version = await runCLIJSON<{
 				currentVersion: string;
 				displayVersion: string;
-				updateAvailable: boolean;
 			}>(config.configPath, ['version']);
 
 			expect(version).toEqual(
 				expect.objectContaining({
 					currentVersion: expect.any(String),
-					displayVersion: expect.any(String),
-					updateAvailable: expect.any(Boolean)
+					displayVersion: expect.any(String)
 				})
 			);
 			expect(version.currentVersion).toMatch(/^(v?\d+\.\d+\.\d+|dev)$/);

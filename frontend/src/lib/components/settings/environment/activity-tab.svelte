@@ -75,27 +75,4 @@
 			{/snippet}
 		</SettingsRow>
 	</SettingsSection>
-	<SettingsSection title={m.upgrade_logs_section_title()}>
-		<SettingsRow
-			for="upgrade-log-retention-days"
-			label={m.upgrade_log_retention_days()}
-			description={m.upgrade_log_retention_days_description()}
-			helpText={m.upgrade_log_retention_days_help()}
-			error={formInputs.upgradeLogRetentionDays.error}
-			lock={lock('upgradeLogRetentionDays')}
-			mixed={mixed('upgradeLogRetentionDays')}
-		>
-			{#snippet children({ describedBy, errorId })}
-				<Input
-					id="upgrade-log-retention-days"
-					type="number"
-					bind:value={formInputs.upgradeLogRetentionDays.value}
-					aria-invalid={!!formInputs.upgradeLogRetentionDays.error}
-					placeholder={mixed('upgradeLogRetentionDays') ? m.mixed() : undefined}
-					aria-describedby={describedBy}
-					aria-errormessage={errorId}
-				/>
-			{/snippet}
-		</SettingsRow>
-	</SettingsSection>
 </div>

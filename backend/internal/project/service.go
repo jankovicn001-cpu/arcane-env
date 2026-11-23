@@ -37,10 +37,7 @@ import (
 	dockertypes "kit.getarcane.app/docker/types"
 	"kit.getarcane.app/fs"
 	"kit.getarcane.app/sys/cgroup"
-	"kit.getarcane.app/updater"
 	"kit.getarcane.app/updater/labels"
-	"kit.getarcane.app/updater/pkg/utils/tagpolicy"
-	updatertypes "kit.getarcane.app/updater/types"
 
 	"getarcane.dev/arcane/v3/internal/common"
 	"getarcane.dev/arcane/v3/internal/config"
@@ -48,7 +45,6 @@ import (
 	dockerInternal "getarcane.dev/arcane/v3/internal/docker"
 	"getarcane.dev/arcane/v3/internal/event"
 	"getarcane.dev/arcane/v3/internal/image"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/kv"
 	"getarcane.dev/arcane/v3/internal/project/children/deployment"
 	projectdetails "getarcane.dev/arcane/v3/internal/project/children/details"
@@ -65,10 +61,8 @@ import (
 	"getarcane.dev/arcane/v3/pkg/handlerutil"
 	"getarcane.dev/arcane/v3/pkg/httpx"
 	"getarcane.dev/arcane/v3/pkg/iconcatalog"
-	"getarcane.dev/arcane/v3/pkg/imageref"
 	"getarcane.dev/arcane/v3/pkg/pagination"
 	"getarcane.dev/arcane/v3/pkg/projects"
-	"getarcane.dev/arcane/v3/pkg/selfcontainer"
 	"getarcane.dev/arcane/v3/pkg/sqlite"
 	"getarcane.dev/arcane/v3/pkg/timeouts"
 	"getarcane.dev/arcane/v3/pkg/volumes"
@@ -182,10 +176,8 @@ type (
 	}
 
 	ServiceUpdateOptions struct {
-		PinnedImages map[string]string
-		User         types.Actor
-		Services     []string
-		DiscoverTags bool
+		User     types.Actor
+		Services []string
 	}
 
 	ProjectTagUpdate struct {
@@ -413,13 +405,9 @@ func NewProjectService(p ProjectServiceParams) *ProjectService {
 		dockerService:      p.DockerService,
 		lifecycleService:   p.LifecycleService,
 		workspace:          workspace.New(p.SettingsService),
-		details:            projectdetails.New(p.DB, p.DockerService, p.ImageService, p.SettingsService),
+		details:            projectdetails.New(p.DB, p.DockerService, p.SettingsService),
 		listing: listing.New(
 			func(ctx context.Context) ([]container.Summary, error) { return s.details.ComposeContainers(ctx) },
-			p.ImageService,
-			func(imageRefs []string, services []types.ProjectRuntimeService, scoped map[string]*types.ImageUpdateInfo) *types.ProjectUpdateInfo {
-				return buildUpdateInfoSummary(imageRefs, projectdetails.MergeProjectContainerUpdateInfo(nil, services, scoped), nil)
-			},
 		),
 		statuses: projectstatus.New(p.DockerService, func(ctx context.Context) error {
 			return s.reconcileProjectStatuses(ctx)
@@ -427,12 +415,8 @@ func NewProjectService(p ProjectServiceParams) *ProjectService {
 		deployment: deployment.New(p.ImageService, p.DockerService, p.BuildService),
 		// Rename recovery compares the stored name and path against its journal and rolls the row back.
 		updates: update.New(update.Params{
-			KVService:       p.KVService,
-			DockerService:   p.DockerService,
-			RegistryService: p.ContainerRegistryService,
-			Credentials: func(ctx context.Context) ([]types.ContainerRegistryCredential, error) {
-				return s.ResolveRegistryCredentials(ctx)
-			},
+			KVService:     p.KVService,
+			DockerService: p.DockerService,
 			ProjectState: func(ctx context.Context, projectID string) (string, string, bool, error) {
 				proj, found, err := s.FindProjectByID(ctx, projectID)
 				if err != nil || !found {
@@ -712,22 +696,6 @@ func (s *ProjectService) GetProjectByComposeName(ctx context.Context, name strin
 	}
 
 	return nil, common.Classify(common.ErrNotFound, fmt.Errorf("project not found: %s", name))
-}
-
-func (s *ProjectService) ComposeServiceImage(ctx context.Context, composeName, serviceName string) (projectID, imageRef string, err error) {
-	proj, err := s.GetProjectByComposeName(ctx, composeName)
-	if err != nil {
-		return "", "", err
-	}
-	effective, err := s.loadComposeProjectForProject(ctx, proj, nil, serviceName)
-	if err != nil {
-		return "", "", fmt.Errorf("load project %s: %w", proj.Name, err)
-	}
-	service, ok := effective.Services[serviceName]
-	if !ok {
-		return "", "", fmt.Errorf("service %s is not active in project %s", serviceName, proj.Name)
-	}
-	return proj.ID, service.Image, nil
 }
 
 func (s *ProjectService) EnsureProjectPathUnderRoot(ctx context.Context, proj *Project, persist bool) error {
@@ -1191,21 +1159,6 @@ func (s *ProjectService) updateProjectServices(ctx context.Context, projectID st
 	if err != nil {
 		return err
 	}
-	if options.DiscoverTags {
-		effective, loadErr := s.loadComposeProjectForProject(ctx, proj, nil, options.Services...)
-		if loadErr != nil {
-			return fmt.Errorf("load project for service image checks: %w", loadErr)
-		}
-		changes, changesErr := s.updates.ImageChanges(ctx, effective, options.Services, strings.TrimSpace(kit.FromPtr(proj.GitOpsManagedBy)) != "")
-		if changesErr != nil {
-			return changesErr
-		}
-		if len(changes) > 0 {
-			if _, saveErr := s.saveProjectServiceImages(ctx, projectID, changes); saveErr != nil {
-				return saveErr
-			}
-		}
-	}
 	previousStatus := proj.Status
 
 	prepare := deployment.PrepareProjectBindDirectories(proj.Path)
@@ -1242,7 +1195,7 @@ func (s *ProjectService) updateProjectServices(ctx context.Context, projectID st
 	progressWriter, _ := ctx.Value(dockertypes.ProgressWriterKey{}).(io.Writer)
 	if updateServicesErr := s.composeCoordinator.UpdateServices(ctx, types.ComposeServiceUpdate{
 		Project: compProj, DockerHost: s.dockerService.DockerHost(), Services: options.Services, Dependents: dependents, StoppedDependents: stoppedDependents,
-		Images: s.deployment.ImageOperations(&options.User, credentials, options.PinnedImages), Progress: progressWriter,
+		Images: s.deployment.ImageOperations(&options.User, credentials), Progress: progressWriter,
 		AuthConfigs: authConfigs, WaitTimeout: timeouts.GetDuration(s.settingsService.GetSettingsConfig().DeployWaitTimeout.AsInt(), timeouts.DefaultDeployWait),
 		RestoreBeforeMutation: func(ctx context.Context) {
 			if statusErr := s.updateProjectStatus(ctx, projectID, previousStatus); statusErr != nil {
@@ -1405,12 +1358,12 @@ func (s *ProjectService) deployProject(ctx context.Context, projectID string, us
 		},
 		ResolveImages: func(ctx context.Context) (types.ComposeImageOperations, error) {
 			credentials, resolveRegistryCredentialsErr := s.ResolveRegistryCredentials(ctx)
-			operations := s.deployment.ImageOperations(&user, credentials, nil)
+			operations := s.deployment.ImageOperations(&user, credentials)
 			return types.ComposeImageOperations{
 				Exists:     operations.Exists,
 				LastTagged: operations.LastTagged,
 				// Deployment pulls are recorded as system actions; builds retain the requesting actor.
-				Pull:          s.deployment.ImageOperations(nil, credentials, nil).Pull,
+				Pull:          s.deployment.ImageOperations(nil, credentials).Pull,
 				Build:         operations.Build,
 				BuildProvider: operations.BuildProvider,
 			}, resolveRegistryCredentialsErr
@@ -1897,7 +1850,7 @@ func (s *ProjectService) RedeployProject(ctx context.Context, projectID string, 
 		return resolveProjectComposeFileErr
 	}
 
-	// Arcane's own container goes through the system upgrade flow; a failed listing skips the guard.
+	// Arcane never redeploys its own container; a failed listing skips the guard.
 	if containers, listErr := s.details.ComposeContainers(ctx); listErr != nil {
 		slog.WarnContext(ctx, "could not list compose containers to check self-redeploy guard; skipping guard", "error", listErr)
 	} else {
@@ -2036,7 +1989,7 @@ func (s *ProjectService) BuildProjectServices(ctx context.Context, projectID str
 
 	defer s.eventService.BeginComposeSuppressionWindow(projectModel.Name)()
 
-	return s.composeCoordinator.BuildServices(ctx, projectID, projectModel, options, progressWriter, s.deployment.ImageOperations(user, nil, nil))
+	return s.composeCoordinator.BuildServices(ctx, projectID, projectModel, options, progressWriter, s.deployment.ImageOperations(user, nil))
 }
 
 func (s *ProjectService) RestartProject(ctx context.Context, projectID string, services []string, user types.Actor) error {
@@ -2250,7 +2203,7 @@ func (s *ProjectService) GetProjectDetails(ctx context.Context, projectID string
 		composeFile = kit.Ternary(detectErr != nil && (!errors.Is(detectErr, common.ErrProjectEnvUnreadable) || identified == ""), "", identified)
 	}
 	composeProj := func() *composetypes.Project {
-		if composeErr != nil || (!opts.IncludeServiceConfigs && !opts.IncludeUpdateInfo) {
+		if composeErr != nil || !opts.IncludeServiceConfigs {
 			return nil
 		}
 		loaded, loadErr := s.getCachedComposeProject(ctx, proj, nil)
@@ -2270,39 +2223,14 @@ func (s *ProjectService) GetProjectDetails(ctx context.Context, projectID string
 	// Runtime status/counts refresh even without the full runtime service array; DB values are only a fallback.
 	services, serr := s.projectServices(ctx, projectID)
 	_, runningCount := listing.ServiceCounts(services)
-	runtimeServices := kit.Ternary(serr == nil && services != nil && (opts.IncludeRuntimeServices || opts.IncludeUpdateInfo), services, nil)
+	runtimeServices := kit.Ternary(serr == nil && services != nil && opts.IncludeRuntimeServices, services, nil)
 	meta := s.ProjectMetadata(ctx, *proj, nil)
 	icon := iconcatalog.Resolve(IconCatalogForContext(ctx), meta.ProjectIcon)
 	return types.Project{
-		Tags:            projectTags,
-		StatusReason:    proj.StatusReason,
-		LastSyncCommit:  syncRecord.LastSyncCommit,
-		GitOpsManagedBy: proj.GitOpsManagedBy,
-		UpdateInfo: func() *types.ProjectUpdateInfo {
-			if !opts.IncludeUpdateInfo {
-				return nil
-			}
-			configured := s.details.ConfiguredRuntimeServices(ctx, runtimeServices)
-			imageRefs := projects.ImageRefsFromComposeConfigs(composeServices)
-			if len(imageRefs) == 0 {
-				imageRefs = projects.ImageRefsFromRuntimeServices(configured)
-			}
-			updateInfoByRef, updateInfoErr := s.imageService.GetUpdateInfoByImageRefs(ctx, imageRefs)
-			if updateInfoErr != nil {
-				slog.WarnContext(ctx, "failed to fetch project update info", "projectId", proj.ID, "projectName", proj.Name, "error", updateInfoErr)
-			}
-			scoped := s.details.ContainerUpdateInfo(ctx, configured)
-			if len(composeServices) > 0 {
-				return BuildConfiguredUpdateInfo(
-					proj.ID,
-					composeServices,
-					updateInfoByRef,
-					s.details.ServiceUpdateRecords(ctx, []string{proj.ID}),
-					projectdetails.ConfiguredRuntimeServiceUpdateInfo(composeServices, configured, scoped),
-				)
-			}
-			return buildUpdateInfoSummary(imageRefs, projectdetails.MergeProjectContainerUpdateInfo(updateInfoByRef, configured, scoped), nil)
-		}(),
+		Tags:                  projectTags,
+		StatusReason:          proj.StatusReason,
+		LastSyncCommit:        syncRecord.LastSyncCommit,
+		GitOpsManagedBy:       proj.GitOpsManagedBy,
 		ArchivedAt:            proj.ArchivedAt,
 		Status:                kit.Ternary(serr == nil && services != nil, listing.ProjectStatus(services), string(proj.Status)),
 		DirName:               kit.FromPtr(proj.DirName),
@@ -2348,291 +2276,6 @@ func (s *ProjectService) GetProjectDetails(ctx context.Context, projectID string
 	}, nil
 }
 
-func (s *ProjectService) enrichProjectsWithUpdateInfo(
-	ctx context.Context,
-	projectsList []Project,
-	details []types.Project,
-	includeHidden bool,
-	env *projectMetadataEnv,
-) []types.Project {
-	if len(projectsList) == 0 || len(details) == 0 {
-		return details
-	}
-	if env == nil {
-		env = s.newProjectMetadataEnv(ctx, projectsList)
-	}
-
-	runtimeByIndex, hiddenServicesByProjectID, hiddenRefsByProjectID := func() ([][]types.ProjectRuntimeService, map[string]map[string]bool, map[string]map[string]bool) {
-		if includeHidden {
-			runtime := make([][]types.ProjectRuntimeService, len(details))
-			for i, d := range details {
-				runtime[i] = d.RuntimeServices
-			}
-			return runtime, nil, nil
-		}
-		return projectdetails.ExcludeHiddenRuntimeServices(details)
-	}()
-
-	// A cancelled request leaves the remaining projects without configured services.
-	refsByIndex := make([][]string, len(projectsList))
-	servicesByIndex := make([][]composetypes.ServiceConfig, len(projectsList))
-	var g errgroup.Group
-	g.SetLimit(maxConcurrentComposeReads)
-	for i, proj := range projectsList {
-		g.Go(func() error {
-			if ctx.Err() != nil {
-				return nil
-			}
-			composeProject, err := s.getCachedComposeProject(ctx, &proj, env)
-			if err != nil {
-				slog.WarnContext(ctx, "failed to resolve project services for update summary", "projectId", proj.ID, "projectName", proj.Name, "error", err)
-				refsByIndex[i] = slices.DeleteFunc(projects.ParseImageRefsJSON(proj.ImageRefsJSON), func(ref string) bool { return hiddenRefsByProjectID[proj.ID][ref] })
-				return nil
-			}
-			services := make([]composetypes.ServiceConfig, 0, len(composeProject.Services))
-			for _, service := range composeProject.Services {
-				hidden, _ := kit.ParseBool(service.Labels[selfcontainer.HiddenResourceLabel])
-				if includeHidden || (!hidden && !hiddenServicesByProjectID[proj.ID][service.Name]) {
-					services = append(services, service)
-				}
-			}
-			refsByIndex[i], servicesByIndex[i] = projects.ImageRefsFromComposeConfigs(services), services
-			return nil
-		})
-	}
-	_ = g.Wait()
-
-	projectIDs := make([]string, len(projectsList))
-	imageRefsByProjectID := make(map[string][]string, len(projectsList))
-	servicesByProjectID := make(map[string][]composetypes.ServiceConfig, len(projectsList))
-	for i, proj := range projectsList {
-		projectIDs[i] = proj.ID
-		imageRefsByProjectID[proj.ID], servicesByProjectID[proj.ID] = refsByIndex[i], servicesByIndex[i]
-	}
-
-	updateInfoByRef, err := s.imageService.GetUpdateInfoByImageRefs(ctx, slices.Concat(refsByIndex...))
-	if err != nil {
-		slog.WarnContext(ctx, "failed to fetch project list update info", "error", err)
-	}
-
-	recordsByProjectID := make(map[string][]imageupdate.ImageUpdateRecord)
-	for _, record := range s.details.ServiceUpdateRecords(ctx, projectIDs) {
-		recordsByProjectID[record.ProjectID] = append(recordsByProjectID[record.ProjectID], record)
-	}
-	configuredByIndex := make([][]types.ProjectRuntimeService, len(runtimeByIndex))
-	for i, runtime := range runtimeByIndex {
-		configuredByIndex[i] = s.details.ConfiguredRuntimeServices(ctx, runtime)
-	}
-	scoped := s.details.ContainerUpdateInfo(ctx, slices.Concat(configuredByIndex...))
-	out := make([]types.Project, 0, len(details))
-	for i, d := range details {
-		out = append(out, types.Project{ //exhaustruct:enforce
-			EnvironmentTag:  d.EnvironmentTag,
-			Tags:            d.Tags,
-			StatusReason:    d.StatusReason,
-			ActivityID:      d.ActivityID,
-			LastSyncCommit:  d.LastSyncCommit,
-			GitOpsManagedBy: d.GitOpsManagedBy,
-			UpdateInfo: func() *types.ProjectUpdateInfo {
-				if services := servicesByProjectID[d.ID]; services != nil {
-					return BuildConfiguredUpdateInfo(
-						d.ID,
-						services,
-						updateInfoByRef,
-						recordsByProjectID[d.ID],
-						projectdetails.ConfiguredRuntimeServiceUpdateInfo(services, configuredByIndex[i], scoped),
-					)
-				}
-				refs := imageRefsByProjectID[d.ID]
-				if len(refs) == 0 {
-					refs = projects.ImageRefsFromRuntimeServices(configuredByIndex[i])
-				}
-				return buildUpdateInfoSummary(refs, projectdetails.MergeProjectContainerUpdateInfo(updateInfoByRef, configuredByIndex[i], scoped), nil)
-			}(),
-			ArchivedAt:            d.ArchivedAt,
-			Status:                d.Status,
-			DirName:               d.DirName,
-			ComposeContent:        d.ComposeContent,
-			ComposeFileName:       d.ComposeFileName,
-			ComposeFiles:          d.ComposeFiles,
-			EnvContent:            d.EnvContent,
-			OverrideContent:       d.OverrideContent,
-			OverrideFileName:      d.OverrideFileName,
-			EnvFileExists:         d.EnvFileExists,
-			Name:                  d.Name,
-			GitRepositoryURL:      d.GitRepositoryURL,
-			GitRepositoryProvider: d.GitRepositoryProvider,
-			GitOpsSyncMode:        env.gitOpsSyncs[strings.TrimSpace(kit.FromPtr(d.GitOpsManagedBy))].Mode,
-			IconLightURL:          d.IconLightURL,
-			RelativePath:          d.RelativePath,
-			ProjectsRoot:          d.ProjectsRoot,
-			ID:                    d.ID,
-			IconDarkURL:           d.IconDarkURL,
-			Path:                  d.Path,
-			UpdatedAt:             d.UpdatedAt,
-			CreatedAt:             d.CreatedAt,
-			RuntimeServices:       runtimeByIndex[i],
-			Services:              d.Services,
-			Jobs:                  d.Jobs,
-			ComposeName:           d.ComposeName,
-			Volumes:               d.Volumes,
-			Networks:              d.Networks,
-			URLs:                  d.URLs,
-			IncludeFiles:          d.IncludeFiles,
-			RunningCount:          d.RunningCount,
-			ServiceCount:          d.ServiceCount,
-			IsDiscovered:          d.IsDiscovered,
-			IsArchived:            d.IsArchived,
-			HasBuildDirective:     d.HasBuildDirective,
-			RedeployDisabled:      d.RedeployDisabled,
-			ConfigurationError:    d.ConfigurationError,
-		})
-	}
-	return out
-}
-
-func BuildConfiguredUpdateInfo(
-	projectID string,
-	services []composetypes.ServiceConfig,
-	byRef map[string]*types.ImageUpdateInfo,
-	records []imageupdate.ImageUpdateRecord,
-	runtimeUpdates ...map[string]*types.ImageUpdateInfo,
-) *types.ProjectUpdateInfo {
-	checks := make(map[string]*imageupdate.ImageUpdateRecord)
-	for i := range records {
-		if records[i].ProjectID == projectID {
-			checks[records[i].ServiceName] = &records[i]
-		}
-	}
-	serviceUpdates := make(map[string]types.ProjectServiceUpdateInfo, len(services))
-	selected := make(map[string]*types.ImageUpdateInfo)
-	runtime := make([]types.ProjectRuntimeService, 0, len(services))
-	unknownRefs := make(map[string]bool)
-	for _, service := range services {
-		imageRef := strings.TrimSpace(service.Image)
-		if imageRef == "" {
-			continue
-		}
-		record := checks[service.Name]
-		policy, policyErr := tagpolicy.Resolve(imageRef, updater.DefaultLabelPolicy().TagPolicy(service.Labels))
-		info := func() *types.ImageUpdateInfo {
-			switch {
-			case record != nil && record.PolicyKey == imageref.UpdatePolicyKey(imageRef, service.Labels):
-				return record.UpdateInfo()
-			case policyErr == nil && policy.Strategy == "digest" && !imageref.IsUpdateCheckDisabled(service.Labels):
-				return byRef[imageRef]
-			default:
-				return nil
-			}
-		}()
-
-		if len(runtimeUpdates) > 0 && runtimeUpdates[0][service.Name] != nil {
-			// A newer clean runtime check clears a stale preview (#4306); digest checks must match the configured reference.
-			runtime := runtimeUpdates[0][service.Name]
-			stored := byRef[imageRef]
-			attributed := policyErr == nil && (policy.Strategy != "digest" || (stored != nil && !stored.HasUpdate && stored.Error == "" &&
-				stored.CheckTime.Equal(runtime.CheckTime) && stored.CurrentDigest == runtime.CurrentDigest && stored.LatestDigest == runtime.LatestDigest))
-			info = projectdetails.MergeProjectContainerUpdateInfo(
-				nil,
-				[]types.ProjectRuntimeService{
-					{
-						ContainerID: "preview",
-						Image:       imageRef,
-					},
-					{
-						ContainerID: "runtime",
-						Image:       imageRef,
-					},
-				},
-				map[string]*types.ImageUpdateInfo{
-					"preview": kit.Ternary(attributed && info != nil && info.HasUpdate && !runtime.HasUpdate && runtime.Error == "" && !runtime.CheckTime.Before(info.CheckTime), nil, info),
-					"runtime": runtime,
-				},
-			)[imageRef]
-		}
-		serviceUpdates[service.Name] = types.ProjectServiceUpdateInfo{ImageRef: imageRef, UpdateInfo: info}
-		selected[service.Name] = info
-		runtime = append(runtime, types.ProjectRuntimeService{ContainerID: service.Name, Image: imageRef})
-		if info == nil {
-			unknownRefs[imageRef] = true
-		}
-	}
-	merged := projectdetails.MergeProjectContainerUpdateInfo(nil, runtime, selected)
-	for imageRef := range unknownRefs {
-		if info := merged[imageRef]; info == nil || !info.HasUpdate {
-			delete(merged, imageRef)
-		}
-	}
-	return buildUpdateInfoSummary(projects.ImageRefsFromComposeConfigs(services), merged, serviceUpdates)
-}
-
-func buildUpdateInfoSummary(
-	imageRefs []string,
-	updateInfoByRef map[string]*types.ImageUpdateInfo,
-	serviceUpdates map[string]types.ProjectServiceUpdateInfo,
-) *types.ProjectUpdateInfo {
-	checkedByRef := make(map[string]types.ImageUpdateInfo)
-	var updatedRefs, notPulledRefs []string
-	var errorMessages []string
-	var latestCheckTime *time.Time
-	for _, imageRef := range imageRefs {
-		info := updateInfoByRef[imageRef]
-		if info == nil {
-			continue
-		}
-		checkedByRef[imageRef] = *info
-		if info.HasUpdate {
-			updatedRefs = append(updatedRefs, imageRef)
-		}
-		if info.UpdateType == imageupdate.UpdateTypeNotPulled {
-			notPulledRefs = append(notPulledRefs, imageRef)
-		}
-		if strings.TrimSpace(info.Error) != "" {
-			errorMessages = append(errorMessages, strings.TrimSpace(info.Error))
-		}
-		if !info.CheckTime.IsZero() && (latestCheckTime == nil || info.CheckTime.After(*latestCheckTime)) {
-			latestCheckTime = new(info.CheckTime)
-		}
-	}
-
-	return &types.ProjectUpdateInfo{
-		ServiceUpdates: serviceUpdates,
-		Status: func() string {
-			switch {
-			case len(imageRefs) == 0:
-				return "unknown"
-			case len(updatedRefs) > 0:
-				return "has_update"
-			case len(errorMessages) > 0:
-				return "error"
-			case len(notPulledRefs) > 0:
-				return "not_pulled"
-			case len(checkedByRef) == len(imageRefs):
-				return "up_to_date"
-			default:
-				return "unknown"
-			}
-		}(),
-		HasUpdate:         len(updatedRefs) > 0,
-		ImageCount:        len(imageRefs),
-		CheckedImageCount: len(checkedByRef),
-		ImagesWithUpdates: len(updatedRefs),
-		ImagesNotPulled:   len(notPulledRefs),
-		ErrorCount:        len(errorMessages),
-		ErrorMessage: func() *string {
-			if len(errorMessages) == 0 {
-				return nil
-			}
-			return new(errorMessages[0])
-		}(),
-		ImageRefs:          append([]string(nil), imageRefs...),
-		UpdatedImageRefs:   updatedRefs,
-		NotPulledImageRefs: notPulledRefs,
-		UpdateInfoByRef:    kit.Ternary(len(checkedByRef) > 0, checkedByRef, nil),
-		LastCheckedAt:      latestCheckTime,
-	}
-}
-
 func (s *ProjectService) CountServicesFromCompose(ctx context.Context, p Project) (int, error) {
 	proj, err := s.loadComposeProjectForProject(ctx, &p, nil)
 	if err != nil {
@@ -2651,7 +2294,6 @@ func (s *ProjectService) ListAllProjects(ctx context.Context) ([]Project, error)
 }
 
 func (s *ProjectService) ListProjects(ctx context.Context, params pagination.QueryParams) ([]types.Project, pagination.Response, error) {
-	updatesFilter := strings.TrimSpace(params.Filters["updates"])
 	query := s.db.WithContext(ctx).Model(&Project{})
 	if archivedFilter := strings.TrimSpace(params.Filters["archived"]); !strings.EqualFold(archivedFilter, "all") {
 		archived, _ := kit.ParseBool(archivedFilter)
@@ -2668,8 +2310,8 @@ func (s *ProjectService) ListProjects(ctx context.Context, params pagination.Que
 		)
 	}
 
-	// Update and label filters page in memory over the container snapshot; otherwise the database pages.
-	paginateInDB := updatesFilter == "" && strings.TrimSpace(params.Filters["label"]) == ""
+	// Label filters page in memory over the container snapshot; otherwise the database pages.
+	paginateInDB := strings.TrimSpace(params.Filters["label"]) == ""
 	if !paginateInDB && params.Limit != -1 {
 		params.Limit = kit.Ternary(params.Limit <= 0, 20, min(params.Limit, 100))
 	}
@@ -2719,25 +2361,6 @@ func (s *ProjectService) ListProjects(ctx context.Context, params pagination.Que
 			break
 		}
 	}
-	if updatesFilter != "" {
-		s.preloadGitOpsSyncs(ctx, env, projectsArray)
-		items = s.enrichProjectsWithUpdateInfo(ctx, projectsArray, items, true, env)
-		// Untracked compose projects only join an unfiltered-by-tag has_update view.
-		if strings.EqualFold(updatesFilter, "has_update") && strings.TrimSpace(params.Filters["tags"]) == "" {
-			if snapshot.Err != nil {
-				slog.WarnContext(ctx, "failed to list compose containers for project update rows", "error", snapshot.Err)
-			} else {
-				// Every tracked project name is known; the candidates cover a failed lookup.
-				var knownProjects []Project
-				if knownErr := s.db.WithContext(ctx).Select("name", "compose_project_name").Find(&knownProjects).Error; knownErr != nil {
-					slog.WarnContext(ctx, "failed to load known project names for compose update discovery", "error", knownErr)
-					knownProjects = projectsArray
-				}
-				items = append(items, s.listing.DiscoveredUpdateRows(ctx, snapshot.Containers, listing.KnownComposeProjectNames(projectRecords(knownProjects)), IconCatalogForContext(ctx))...)
-			}
-		}
-	}
-
 	result, pageIndexes := func() (pagination.FilterResult[types.Project], []int) {
 		if paginateInDB {
 			indexes := make([]int, len(items))
@@ -2757,10 +2380,7 @@ func (s *ProjectService) ListProjects(ctx context.Context, params pagination.Que
 		pageProjects = append(pageProjects, byID[result.Items[i].ID])
 		pageDetails = append(pageDetails, result.Items[i])
 	}
-	if updatesFilter == "" {
-		s.preloadGitOpsSyncs(ctx, env, pageProjects)
-		pageDetails = s.enrichProjectsWithUpdateInfo(ctx, pageProjects, pageDetails, true, env)
-	}
+	s.preloadGitOpsSyncs(ctx, env, pageProjects)
 	metas := make([]projects.ArcaneComposeMetadata, len(pageProjects))
 	var metaGroup errgroup.Group
 	metaGroup.SetLimit(maxConcurrentComposeReads)
@@ -2774,53 +2394,17 @@ func (s *ProjectService) ListProjects(ctx context.Context, params pagination.Que
 	if metaErr := metaGroup.Wait(); metaErr != nil {
 		slog.WarnContext(ctx, "project metadata resolution failed", "error", metaErr)
 	}
-	for k, d := range listing.ApplyPresentation(ctx, env.projectsDirectory, IconCatalogForContext(ctx), projectRecords(pageProjects), pageDetails, metas) {
+	for k, d := range listing.ApplyPresentation(ctx, listing.Presentation{
+		ProjectsDir: env.projectsDirectory,
+		Catalog:     IconCatalogForContext(ctx),
+		Records:     projectRecords(pageProjects),
+		Details:     pageDetails,
+		Metas:       metas,
+		SyncMode:    func(syncID string) string { return env.gitOpsSyncs[syncID].Mode },
+	}) {
 		result.Items[pageIndexes[k]] = d
 	}
 	return result.Items, kit.Ternary(paginateInDB, paginationResp, pagination.BuildResponse(result.TotalCount, result.TotalAvailable, params)), nil
-}
-
-func (s *ProjectService) CountProjectsWithPendingUpdates(ctx context.Context, allContainers []container.Summary, allProjects []Project) int {
-	activeProjects := make([]Project, 0, len(allProjects))
-	for _, proj := range allProjects {
-		if !proj.IsArchived {
-			activeProjects = append(activeProjects, proj)
-		}
-	}
-
-	// Runtime container IDs keep tag-policy updates scoped to their project.
-	details := make([]types.Project, 0, len(activeProjects))
-	containerIndex := listing.IndexComposeContainers(allContainers)
-	for _, proj := range activeProjects {
-		var runtimeServices []types.ProjectRuntimeService
-		for _, c := range containerIndex.ProjectContainers(projectRecord(proj)) {
-			runtimeServices = append(runtimeServices, types.ProjectRuntimeService{
-				Name:            docker.ComposeServiceLabel(c.Labels),
-				ContainerID:     c.ID,
-				Image:           c.Image,
-				ImageID:         c.ImageID,
-				ContainerLabels: c.Labels,
-			})
-		}
-		details = append(details, types.Project{ID: proj.ID, RuntimeServices: runtimeServices})
-	}
-	count := 0
-	for _, d := range s.enrichProjectsWithUpdateInfo(ctx, activeProjects, details, false, nil) {
-		if kit.FromPtr(d.UpdateInfo).HasUpdate {
-			count++
-		}
-	}
-
-	visibleContainers := make([]container.Summary, 0, len(allContainers))
-	for _, c := range allContainers {
-		hidden, _ := kit.ParseBool(c.Labels[selfcontainer.HiddenResourceLabel])
-		if !hidden {
-			visibleContainers = append(visibleContainers, c)
-		}
-	}
-	// Untracked compose projects count too, so the dashboard badge matches the projects table.
-	known := listing.KnownComposeProjectNames(projectRecords(allProjects))
-	return count + s.listing.CountDiscoveredUpdates(ctx, visibleContainers, known, IconCatalogForContext(ctx))
 }
 
 // ProjectMetadata is cached until a merged compose or env file changes; a nil env resolves inputs here.
@@ -3728,58 +3312,6 @@ func (s *ProjectService) prepareProjectRenameVolumeMigration(
 	return projects.PlanVolumeMigration(ctx, dockerClient, composeProject, oldComposeName, newComposeName, volumes.ToolsImage(s.settingsService.GetSettingsConfig().ToolsImageRegistry.Value))
 }
 
-func (s *ProjectService) UpdateProjectServiceImages(ctx context.Context, projectID string, changes map[string]updatertypes.ServiceImageChange, options ServiceUpdateOptions) error {
-	unlock, err := s.LockProject(ctx, "update project service images", projectID)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	services, err := s.saveProjectServiceImages(ctx, projectID, changes)
-	if err != nil {
-		return err
-	}
-	// The desired source stays on failure so a partially recreated update remains retryable.
-	return s.updateProjectServices(ctx, projectID, ServiceUpdateOptions{
-		PinnedImages: options.PinnedImages,
-		User:         options.User,
-		Services:     services,
-	})
-}
-
-func (s *ProjectService) SaveProjectServiceImages(ctx context.Context, projectID string, changes map[string]updatertypes.ServiceImageChange) ([]string, error) {
-	unlock, err := s.LockProject(ctx, "save project service images", projectID)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	return s.saveProjectServiceImages(ctx, projectID, changes)
-}
-
-func (s *ProjectService) saveProjectServiceImages(ctx context.Context, projectID string, changes map[string]updatertypes.ServiceImageChange) ([]string, error) {
-	if len(changes) == 0 {
-		return nil, errors.New("service image changes are required")
-	}
-	proj, err := s.getMutableProject(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(kit.FromPtr(proj.GitOpsManagedBy)) != "" {
-		return nil, errors.New("tag updates cannot edit a GitOps-managed project; update image tags in the source repository")
-	}
-	// Selecting the changed services keeps profile-gated ones active.
-	effective, err := s.loadComposeProjectForProject(ctx, proj, nil, slices.Collect(maps.Keys(changes))...)
-	if err != nil {
-		return nil, fmt.Errorf("load project for tag update: %w", err)
-	}
-	services, err := s.updates.ApplyImageChanges(ctx, proj.Path, effective, changes)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidateProjectCaches(projectID)
-	return services, nil
-}
-
 func (s *ProjectService) GetProjectWorkspace(ctx context.Context, projectID, folderPath string) (*types.Workspace, error) {
 	proj, err := s.GetProjectFromDatabaseByID(ctx, projectID)
 	if err != nil {
@@ -3944,16 +3476,14 @@ func (s *ProjectService) GetProjectStatusCounts(ctx context.Context) (types.Proj
 	}
 	snapshot := s.listing.Snapshot(ctx)
 	if snapshot.Err != nil {
-		return types.ProjectStatusCounts{}, fmt.Errorf("failed to list containers for project update count: %w", snapshot.Err)
+		return types.ProjectStatusCounts{}, fmt.Errorf("failed to list containers for project status counts: %w", snapshot.Err)
 	}
-	updates := s.CountProjectsWithPendingUpdates(ctx, snapshot.Containers, projectsList)
 	counts := listing.StatusCounts(projectRecords(projectsList), snapshot)
 	return types.ProjectStatusCounts{
 		RunningProjects:  counts.RunningProjects,
 		StoppedProjects:  counts.StoppedProjects,
 		TotalProjects:    counts.TotalProjects,
 		ArchivedProjects: counts.ArchivedProjects,
-		UpdatesAvailable: updates,
 	}, nil
 }
 
@@ -3994,7 +3524,6 @@ func (s *ProjectService) AggregateProjectCounts(ctx context.Context) (types.ApiR
 				StoppedProjects:  counts.StoppedProjects + environment.Data.StoppedProjects,
 				TotalProjects:    counts.TotalProjects + environment.Data.TotalProjects,
 				ArchivedProjects: counts.ArchivedProjects + environment.Data.ArchivedProjects,
-				UpdatesAvailable: counts.UpdatesAvailable + environment.Data.UpdatesAvailable,
 			}
 		}
 		return counts

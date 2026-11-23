@@ -6,32 +6,6 @@ import (
 )
 
 type (
-	PodmanAutoUpdateMode string
-
-	PodmanAutoUpdateOptions struct {
-		Rollback  *bool               `json:"rollback,omitempty"`
-		TLSVerify *bool               `json:"tlsVerify,omitempty"`
-		Filters   map[string][]string `json:"filters,omitempty"`
-		Authfile  string              `json:"authfile,omitempty"`
-		DryRun    bool                `json:"dryRun,omitempty"`
-	}
-
-	PodmanAutoUpdateReport struct {
-		ContainerID   string `json:"containerId"`
-		ContainerName string `json:"containerName"`
-		ImageName     string `json:"imageName"`
-		Policy        string `json:"policy"`
-		SystemdUnit   string `json:"systemdUnit"`
-		Updated       string `json:"updated"`
-	}
-
-	PodmanAutoUpdateResult struct {
-		Unit    *PodmanUnitStatus        `json:"unit,omitempty"`
-		Mode    PodmanAutoUpdateMode     `json:"mode"`
-		Reports []PodmanAutoUpdateReport `json:"reports"`
-		Errors  []string                 `json:"errors"`
-	}
-
 	KubeGenerateType string
 
 	KubePlayRequest struct {
@@ -431,18 +405,17 @@ type (
 	PodmanSystemdScope string
 
 	PodmanStatus struct {
-		Version              string               `json:"version,omitempty"`
-		APIVersion           string               `json:"apiVersion,omitempty"`
-		AutoUpdateMode       PodmanAutoUpdateMode `json:"autoUpdateMode"`
-		SystemdScope         PodmanSystemdScope   `json:"systemdScope,omitempty"`
-		SystemdReason        string               `json:"systemdReason,omitempty"`
-		Reason               string               `json:"reason,omitempty"`
-		PodCount             int                  `json:"podCount" doc:"Number of Podman pods"`
-		Detected             bool                 `json:"detected"`
-		Rootless             bool                 `json:"rootless"`
-		QuadletsSupported    bool                 `json:"quadletsSupported"`
-		QuadletAppsSupported bool                 `json:"quadletAppsSupported"`
-		SystemdAvailable     bool                 `json:"systemdAvailable"`
+		Version              string             `json:"version,omitempty"`
+		APIVersion           string             `json:"apiVersion,omitempty"`
+		SystemdScope         PodmanSystemdScope `json:"systemdScope,omitempty"`
+		SystemdReason        string             `json:"systemdReason,omitempty"`
+		Reason               string             `json:"reason,omitempty"`
+		PodCount             int                `json:"podCount" doc:"Number of Podman pods"`
+		Detected             bool               `json:"detected"`
+		Rootless             bool               `json:"rootless"`
+		QuadletsSupported    bool               `json:"quadletsSupported"`
+		QuadletAppsSupported bool               `json:"quadletAppsSupported"`
+		SystemdAvailable     bool               `json:"systemdAvailable"`
 	}
 
 	PodmanSystemdAvailability struct {
@@ -625,10 +598,6 @@ type (
 )
 
 const (
-	PodmanAutoUpdateModeREST        PodmanAutoUpdateMode = "rest"
-	PodmanAutoUpdateModeSystemd     PodmanAutoUpdateMode = "systemd"
-	PodmanAutoUpdateModeUnavailable PodmanAutoUpdateMode = "unavailable"
-
 	KubeGenerateTypePod        KubeGenerateType = "pod"
 	KubeGenerateTypeService    KubeGenerateType = "service"
 	KubeGenerateTypeDeployment KubeGenerateType = "deployment"

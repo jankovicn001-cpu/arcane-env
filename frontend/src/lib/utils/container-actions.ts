@@ -3,12 +3,8 @@ import { toast } from 'svelte-sonner';
 import { openConfirmDialog } from '#lib/components/confirm-dialog/index.js';
 import { m } from '#lib/paraglide/messages.js';
 import { containerService } from '#lib/services/container-service.js';
-import { activityStore } from '#lib/stores/activity.store.svelte.js';
-import { environmentStore } from '#lib/stores/environment.store.svelte.js';
-import type { Activity } from '#lib/types/activity.js';
 import { activityToastOptions, extractActivityId } from '#lib/utils/activity-toast.js';
 import { handleApiResultWithCallbacks } from '#lib/utils/api.js';
-import { hasPermission } from '#lib/utils/auth.js';
 import { tryCatch } from '#lib/utils/try-catch.js';
 
 type ContainerLifecycleAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause';
@@ -134,51 +130,6 @@ export function confirmAndRemoveContainer({
 					async onSuccess(data) {
 						toast.success(m.containers_remove_success(), activityToastOptions(extractActivityId(data)));
 						await onRefresh?.();
-					}
-				});
-			}
-		}
-	});
-}
-
-type ConfirmAndUpdateContainerOptions = {
-	containerId: string;
-	containerName: string;
-	environmentId: string;
-	setLoading?: (loading: boolean) => void;
-	onRefresh?: () => unknown;
-	onAccepted?: (activity: Activity, environmentId: string) => void | Promise<void>;
-};
-
-export function confirmAndUpdateContainer({
-	containerId,
-	containerName,
-	environmentId,
-	setLoading,
-	onRefresh,
-	onAccepted
-}: ConfirmAndUpdateContainerOptions) {
-	openConfirmDialog({
-		title: m.update_container(),
-		message: m.containers_update_confirm_message({ name: containerName }),
-		confirm: {
-			label: m.update_container(),
-			destructive: false,
-			action: async () => {
-				setLoading?.(true);
-				await handleApiResultWithCallbacks({
-					result: await tryCatch(containerService.updateContainer(containerId, environmentId)),
-					message: m.containers_update_accept_failed({ name: containerName }),
-					setLoadingState: (value) => setLoading?.(value),
-					async onSuccess(activity) {
-						const canReadActivity = hasPermission('activities:read', environmentId);
-						if (canReadActivity) activityStore.acceptActivity(activity);
-						toast.info(
-							m.containers_update_accepted({ name: containerName }),
-							canReadActivity ? activityToastOptions(activity.id, false, environmentId) : undefined
-						);
-						await onAccepted?.(activity, environmentId);
-						if (!canReadActivity && environmentStore.shown.some((env) => env.id === environmentId)) await onRefresh?.();
 					}
 				});
 			}

@@ -17,12 +17,13 @@ type (
 	}
 
 	RoleAssignment struct {
-		CreatedAt     time.Time `json:"createdAt" doc:"Creation timestamp"`
-		EnvironmentID *string   `json:"environmentId,omitempty" doc:"Environment ID this assignment is scoped to; omit for a global assignment"`
-		ID            string    `json:"id" doc:"Unique identifier of the assignment"`
-		UserID        string    `json:"userId" doc:"ID of the user holding this assignment"`
-		RoleID        string    `json:"roleId" doc:"ID of the granted role"`
-		Source        string    `json:"source" doc:"How the assignment was created" enum:"manual,oidc"`
+		CreatedAt          time.Time `json:"createdAt" doc:"Creation timestamp"`
+		EnvironmentID      *string   `json:"environmentId,omitempty" doc:"Environment ID this assignment is scoped to; omit for a global assignment"`
+		EnvironmentGroupID *string   `json:"environmentGroupId,omitempty" doc:"Environment group ID this assignment is scoped to; applies to every agent in the group. Mutually exclusive with environmentId"`
+		ID                 string    `json:"id" doc:"Unique identifier of the assignment"`
+		UserID             string    `json:"userId" doc:"ID of the user holding this assignment"`
+		RoleID             string    `json:"roleId" doc:"ID of the granted role"`
+		Source             string    `json:"source" doc:"How the assignment was created" enum:"manual,oidc,ldap"`
 	}
 
 	SetUserRoleAssignments struct {
@@ -30,24 +31,46 @@ type (
 	}
 
 	UserRoleAssignmentInput struct {
-		EnvironmentID *string `json:"environmentId,omitempty" doc:"Environment ID to scope the assignment to; omit for a global assignment"`
-		RoleID        string  `json:"roleId" doc:"ID of the role to grant"`
+		EnvironmentID      *string `json:"environmentId,omitempty" doc:"Environment ID to scope the assignment to; omit for a global assignment"`
+		EnvironmentGroupID *string `json:"environmentGroupId,omitempty" doc:"Environment group ID to scope the assignment to; applies to every agent in the group. Mutually exclusive with environmentId"`
+		RoleID             string  `json:"roleId" doc:"ID of the role to grant"`
 	}
 
 	OidcRoleMapping struct {
-		CreatedAt     time.Time  `json:"createdAt" readOnly:"true"`
-		EnvironmentID *string    `json:"environmentId,omitempty" doc:"Environment ID to scope the assignment to; omit for a global assignment"`
-		UpdatedAt     *time.Time `json:"updatedAt,omitempty" readOnly:"true"`
-		ID            string     `json:"id" readOnly:"true" doc:"Unique identifier of the mapping"`
-		ClaimValue    string     `json:"claimValue" required:"false" doc:"OIDC claim value that triggers this mapping" example:"docker-admins"`
-		RoleID        string     `json:"roleId" required:"false" doc:"Role to assign when the claim matches"`
-		Source        string     `json:"source" readOnly:"true" enum:"manual,env" doc:"Origin: manual rows are editable via UI/API; env rows come from ARCANE_OIDC_ROLE_MAPPINGS and are read-only"`
+		CreatedAt          time.Time  `json:"createdAt" readOnly:"true"`
+		EnvironmentID      *string    `json:"environmentId,omitempty" doc:"Environment ID to scope the assignment to; omit for a global assignment"`
+		EnvironmentGroupID *string    `json:"environmentGroupId,omitempty" doc:"Environment group ID to scope the assignment to; applies to every agent in the group. Mutually exclusive with environmentId"`
+		UpdatedAt          *time.Time `json:"updatedAt,omitempty" readOnly:"true"`
+		ID                 string     `json:"id" readOnly:"true" doc:"Unique identifier of the mapping"`
+		ClaimValue         string     `json:"claimValue" required:"false" doc:"OIDC claim value that triggers this mapping" example:"docker-admins"`
+		RoleID             string     `json:"roleId" required:"false" doc:"Role to assign when the claim matches"`
+		Source             string     `json:"source" readOnly:"true" enum:"manual,env" doc:"Origin: manual rows are editable via UI/API; env rows come from ARCANE_OIDC_ROLE_MAPPINGS and are read-only"`
 	}
 
 	OidcRoleMappingSpec struct {
-		EnvironmentID *string `json:"environmentId,omitempty" doc:"Environment ID to scope the assignment to; omit for a global assignment"`
-		ClaimValue    string  `json:"claimValue" doc:"OIDC claim value to match"`
-		RoleID        string  `json:"roleId" doc:"Role ID to assign when the claim matches"`
+		EnvironmentID      *string `json:"environmentId,omitempty" doc:"Environment ID to scope the assignment to; omit for a global assignment"`
+		EnvironmentGroupID *string `json:"environmentGroupId,omitempty" doc:"Environment group ID to scope the assignment to; applies to every agent in the group. Mutually exclusive with environmentId"`
+		ClaimValue         string  `json:"claimValue" doc:"OIDC claim value to match"`
+		RoleID             string  `json:"roleId" doc:"Role ID to assign when the claim matches"`
+	}
+
+	EnvironmentAccessEntry struct {
+		DisplayName   *string `json:"displayName,omitempty" doc:"Display name of the user"`
+		ID            string  `json:"id" doc:"Role assignment ID"`
+		PrincipalType string  `json:"principalType" enum:"user,group" doc:"Whether the assignment belongs to a user or a user group"`
+		UserID        string  `json:"userId,omitempty" doc:"ID of the user holding the assignment; omitted for user groups"`
+		Username      string  `json:"username,omitempty" doc:"Username of the user holding the assignment; omitted for user groups"`
+		UserGroupID   string  `json:"userGroupId,omitempty" doc:"ID of the user group holding the assignment; omitted for users"`
+		UserGroupName string  `json:"userGroupName,omitempty" doc:"Name of the user group holding the assignment; omitted for users"`
+		RoleID        string  `json:"roleId" doc:"ID of the granted role"`
+		RoleName      string  `json:"roleName" doc:"Name of the granted role"`
+		Source        string  `json:"source" enum:"manual,oidc,ldap" doc:"How the assignment was created; only manual assignments can be removed here"`
+	}
+
+	CreateEnvironmentAccessRequest struct {
+		UserID      string `json:"userId,omitempty" required:"false" doc:"ID of the user to grant access to; set exactly one of userId and userGroupId"`
+		UserGroupID string `json:"userGroupId,omitempty" required:"false" doc:"ID of the user group to grant access to; set exactly one of userId and userGroupId"`
+		RoleID      string `json:"roleId" minLength:"1" doc:"ID of the role to grant on the environment group"`
 	}
 
 	PermissionsManifest struct {
@@ -91,4 +114,9 @@ type (
 		Children      []string `json:"children,omitempty" doc:"Child surface IDs used by aggregate landing surfaces"`
 		FallbackOrder int      `json:"fallbackOrder,omitempty" doc:"Positive ordering hint for route fallback selection"`
 	}
+)
+
+const (
+	EnvironmentAccessPrincipalUser  = "user"
+	EnvironmentAccessPrincipalGroup = "group"
 )

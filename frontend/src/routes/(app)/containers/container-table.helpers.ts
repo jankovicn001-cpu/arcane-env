@@ -9,7 +9,6 @@ export type ActionStatus =
 	| 'pausing'
 	| 'unpausing'
 	| 'killing'
-	| 'updating'
 	| 'removing'
 	| 'redeploying'
 	| '';
@@ -35,9 +34,6 @@ export function containerSortValue(container: ContainerSummary, column: string):
 			return container.resourceSample?.memoryUsageBytes ?? null;
 		case 'ports':
 			return lowestPort(container);
-		// The updates table sorts its image column as imageRef.
-		case 'imageRef':
-			return container.image;
 		default:
 			return container[column as keyof ContainerSummary];
 	}
@@ -55,7 +51,6 @@ const actionStatusMessages: Record<ActionStatus, () => string> = {
 	unpausing: () => m.common_action_unpausing(),
 	killing: () => m.common_action_killing(),
 	redeploying: () => m.common_action_redeploying(),
-	updating: () => m.common_action_updating(),
 	removing: () => m.common_action_removing(),
 	'': () => ''
 };

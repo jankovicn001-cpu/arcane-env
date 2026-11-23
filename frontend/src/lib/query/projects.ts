@@ -13,12 +13,11 @@ import {
 	type EnvironmentFailure
 } from '#lib/utils/environments.js';
 
-const emptyStatusCounts: ProjectStatusCounts = {
+export const emptyStatusCounts: ProjectStatusCounts = {
 	runningProjects: 0,
 	stoppedProjects: 0,
 	totalProjects: 0,
-	archivedProjects: 0,
-	updatesAvailable: 0
+	archivedProjects: 0
 };
 
 export function projectListQuery(scope: string, environments: EnvironmentRef[], requestOptions: SearchPaginationSortRequest) {

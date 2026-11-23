@@ -198,15 +198,14 @@ func RegisterProjects(api huma.API, projectService *ProjectService, activityServ
 		Method:      http.MethodPost,
 		Path:        "/agents/{id}/projects/{projectId}",
 		Summary:     "Run project action",
-		Description: "Bring down, restart, archive, unarchive, or update services of a Docker Compose project. Restart and updateservices accept an optional services list (empty targets all services).",
+		Description: "Bring down, restart, archive, or unarchive a Docker Compose project. Restart accepts an optional services list (empty targets all services).",
 		Tags:        []string{"Projects"},
 		Security:    handlerutil.DefaultOperationSecurity(),
 	}, "action", map[string]string{
-		"down":           authz.PermProjectsDown,
-		"restart":        authz.PermProjectsRestart,
-		"archive":        authz.PermProjectsArchive,
-		"unarchive":      authz.PermProjectsArchive,
-		"updateservices": authz.PermProjectsUpdate,
+		"down":      authz.PermProjectsDown,
+		"restart":   authz.PermProjectsRestart,
+		"archive":   authz.PermProjectsArchive,
+		"unarchive": authz.PermProjectsArchive,
 	}, h.RunProjectAction)
 
 	middleware.RegisterWithPermission(api, huma.Operation{
@@ -283,16 +282,6 @@ func RegisterProjects(api huma.API, projectService *ProjectService, activityServ
 		Tags:        []string{"Projects"},
 		Security:    handlerutil.DefaultOperationSecurity(),
 	}, authz.PermProjectsRead, h.GetProjectRuntime)
-
-	middleware.RegisterWithPermission(api, huma.Operation{
-		OperationID: "get-project-updates",
-		Method:      http.MethodGet,
-		Path:        "/agents/{id}/projects/{projectId}/updates",
-		Summary:     "Get project updates",
-		Description: "Get image update summary for a project",
-		Tags:        []string{"Projects"},
-		Security:    handlerutil.DefaultOperationSecurity(),
-	}, authz.PermProjectsRead, h.GetProjectUpdates)
 
 	middleware.RegisterWithPermission(api, huma.Operation{
 		OperationID: "destroy-project",

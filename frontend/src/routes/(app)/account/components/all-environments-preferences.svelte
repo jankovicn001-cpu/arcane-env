@@ -8,6 +8,7 @@
 	import SettingsRow from '#lib/components/settings/settings-row.svelte';
 	import SettingsSection from '#lib/components/settings/settings-section.svelte';
 	import * as Popover from '#lib/components/ui/popover/index.js';
+	import { Switch } from '#lib/components/ui/switch/index.js';
 	import { ResetIcon } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import {
@@ -24,6 +25,7 @@
 	const swatches = environmentColorPalette.map((color) => ({ label: color, color }));
 
 	const labelStyle = $derived(userStore.current?.preferences?.environmentLabelStyle ?? 'name');
+	const environmentFirstNavigation = $derived(userStore.current?.preferences?.environmentFirstNavigation ?? false);
 	const labelStyleOptions = [
 		{ value: 'name', label: m.environment_label_style_name() },
 		{ value: 'dot', label: m.environment_label_style_dot() }
@@ -54,6 +56,20 @@
 					aria-describedby={describedBy}
 				/>
 			</div>
+		{/snippet}
+	</SettingsRow>
+	<SettingsRow
+		label={m.environment_first_navigation()}
+		description={m.environment_first_navigation_description()}
+		layout="switch"
+	>
+		{#snippet children({ describedBy })}
+			<Switch
+				id="account-environment-first-navigation"
+				checked={environmentFirstNavigation}
+				onCheckedChange={(checked) => void saveUserPreferences({ environmentFirstNavigation: checked })}
+				aria-describedby={describedBy}
+			/>
 		{/snippet}
 	</SettingsRow>
 	<SettingsRow label={m.environment_colors()} description={m.environment_colors_description()} layout="wide">

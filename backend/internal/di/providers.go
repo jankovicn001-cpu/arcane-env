@@ -25,7 +25,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/event"
 	"getarcane.dev/arcane/v3/internal/gitops"
 	"getarcane.dev/arcane/v3/internal/image"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/kv"
 	"getarcane.dev/arcane/v3/internal/network"
 	"getarcane.dev/arcane/v3/internal/project"
@@ -36,7 +35,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/settings"
 	"getarcane.dev/arcane/v3/internal/system"
 	"getarcane.dev/arcane/v3/internal/template"
-	"getarcane.dev/arcane/v3/internal/updater"
 	"getarcane.dev/arcane/v3/internal/volume"
 	"getarcane.dev/arcane/v3/internal/vulnerability"
 	"getarcane.dev/arcane/v3/internal/webhook"
@@ -270,14 +268,6 @@ func provideDockerClientService(p dockerClientServiceParams) *docker.DockerClien
 	return service
 }
 
-func provideImageUpdateService(p imageupdate.ImageUpdateServiceParams, engine *flow.Engine) (*imageupdate.ImageUpdateService, error) {
-	service := imageupdate.NewImageUpdateService(p)
-	if err := service.RegisterWorkflows(engine); err != nil {
-		return nil, err
-	}
-	return service, nil
-}
-
 func provideImageService(p image.ImageServiceParams, engine *flow.Engine) (*image.ImageService, error) {
 	service := image.NewImageService(p)
 	if err := service.RegisterWorkflows(engine); err != nil {
@@ -290,17 +280,6 @@ func provideVulnerabilityService(p vulnerability.VulnerabilityServiceParams, eng
 	service := vulnerability.NewVulnerabilityService(p)
 	if err := service.RegisterWorkflows(engine); err != nil {
 		return nil, err
-	}
-	return service, nil
-}
-
-func provideUpdaterService(p updater.UpdaterServiceParams, engine *flow.Engine) (*updater.UpdaterService, error) {
-	service, err := updater.NewUpdaterService(p)
-	if err != nil {
-		return nil, err
-	}
-	if registerWorkflowsErr := service.RegisterWorkflows(engine); registerWorkflowsErr != nil {
-		return nil, registerWorkflowsErr
 	}
 	return service, nil
 }
@@ -373,10 +352,9 @@ func provideSystemService(
 	p system.SystemServiceParams,
 	environments *environment.EnvironmentService,
 	engine *flow.Engine,
-	roles *role.RoleService,
 ) (*system.SystemService, error) {
 	service := system.NewSystemService(p)
-	if err := service.RegisterWorkflows(engine, environments, roles); err != nil {
+	if err := service.RegisterWorkflows(engine, environments); err != nil {
 		return nil, err
 	}
 	return service, nil

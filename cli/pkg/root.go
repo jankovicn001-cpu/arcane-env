@@ -32,6 +32,7 @@ import (
 	configClient "getarcane.dev/cli/v3/pkg/config"
 	"getarcane.dev/cli/v3/pkg/containers"
 	"getarcane.dev/cli/v3/pkg/doctor"
+	"getarcane.dev/cli/v3/pkg/environments"
 	"getarcane.dev/cli/v3/pkg/generate"
 	"getarcane.dev/cli/v3/pkg/gitops"
 	"getarcane.dev/cli/v3/pkg/images"
@@ -41,11 +42,9 @@ import (
 	"getarcane.dev/cli/v3/pkg/projects"
 	"getarcane.dev/cli/v3/pkg/registries"
 	"getarcane.dev/cli/v3/pkg/repos"
-	"getarcane.dev/cli/v3/pkg/selfupdate"
 	"getarcane.dev/cli/v3/pkg/settings"
 	"getarcane.dev/cli/v3/pkg/system"
 	"getarcane.dev/cli/v3/pkg/templates"
-	"getarcane.dev/cli/v3/pkg/updater"
 	"getarcane.dev/cli/v3/pkg/variables"
 	"getarcane.dev/cli/v3/pkg/version"
 	"getarcane.dev/cli/v3/pkg/volumes"
@@ -134,8 +133,8 @@ func NewRootCommand() *cobra.Command {
 		configClient.Command(), completion.NewCommand(root), doctor.Command(), generateCmd, version.Command(), auth.Command(),
 		containers.Command(), imagesCmd, volumes.Command(), networks.Command(), projects.Command(), agents.Command(),
 		registries.Command(), repos.Command(), templates.Command(), settings.Command(), jobs.Command(), system.Command(),
-		updater.Command(), selfupdate.Command(), admin.Command(), gitops.Command(), variables.Command(), activities.Command(),
-		webhooks.Command(), podman.Command(),
+		admin.Command(), gitops.Command(), variables.Command(), activities.Command(),
+		webhooks.Command(), podman.Command(), environments.Command(),
 	)
 	instrumentCommandTree(root)
 	return root

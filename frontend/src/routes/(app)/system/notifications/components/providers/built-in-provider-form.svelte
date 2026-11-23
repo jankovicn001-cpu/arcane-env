@@ -48,8 +48,6 @@
 	}: Props = $props();
 
 	const eventSubscriptionSchemaFields = {
-		eventImageUpdate: z.boolean(),
-		eventContainerUpdate: z.boolean(),
 		eventVulnerabilityFound: z.boolean(),
 		eventPruneReport: z.boolean(),
 		eventAutoHeal: z.boolean()
@@ -1084,8 +1082,6 @@
 
 	<EventSubscriptions
 		providerId={provider}
-		bind:eventImageUpdate={values.eventImageUpdate}
-		bind:eventContainerUpdate={values.eventContainerUpdate}
 		bind:eventVulnerabilityFound={values.eventVulnerabilityFound}
 		bind:eventPruneReport={values.eventPruneReport}
 		bind:eventAutoHeal={values.eventAutoHeal}

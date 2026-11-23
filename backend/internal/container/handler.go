@@ -55,7 +55,6 @@ type (
 		Sort            string `query:"sort" doc:"Column to sort by"`
 		Order           string `query:"order" default:"asc" doc:"Sort direction"`
 		GroupBy         string `query:"groupBy" doc:"Optional grouping mode (for example: project)"`
-		Updates         string `query:"updates" doc:"Filter by update status (has_update, up_to_date, error, unknown)"`
 		Standalone      string `query:"standalone" doc:"Filter standalone containers only (true/false)"`
 		Label           string `query:"label" doc:"Filter by label key or key=value"`
 		Status          string `query:"status" doc:"Filter by state (running, exited, paused, restarting, created, dead, stopped, unhealthy)"`
@@ -99,12 +98,6 @@ type (
 		RemoveVolumes bool   `query:"volumes" default:"false" doc:"Remove associated volumes"`
 	}
 
-	SetAutoUpdateInput struct {
-		EnvironmentID string `path:"id" doc:"Environment ID"`
-		ContainerID   string `path:"containerId" doc:"Container ID"`
-		Body          types.ContainerSetAutoUpdateRequest
-	}
-
 	CommitContainerInput struct {
 		EnvironmentID string `path:"id" doc:"Environment ID"`
 		ContainerID   string `path:"containerId" doc:"Container ID"`
@@ -140,9 +133,6 @@ type (
 
 func (h *ContainerHandler) ListContainers(ctx context.Context, input *ListContainersInput) (*ListContainersOutput, error) {
 	params := handlerutil.PaginationParams(input.Start, input.Limit, input.Sort, input.Order, input.Search)
-	if input.Updates != "" {
-		params.Filters["updates"] = input.Updates
-	}
 	if input.Standalone != "" {
 		params.Filters["standalone"] = input.Standalone
 	}
@@ -569,26 +559,24 @@ func (h *ContainerHandler) RedeployContainer(ctx context.Context, input *GetCont
 		Body: types.ApiResponse[types.ContainerDetails]{
 			Success: true,
 			Data: types.ContainerDetails{ //exhaustruct:enforce
-				ID:                details.ID,
-				Name:              details.Name,
-				Image:             details.Image,
-				ImageID:           details.ImageID,
-				Created:           details.Created,
-				State:             details.State,
-				Config:            details.Config,
-				HostConfig:        details.HostConfig,
-				NetworkSettings:   details.NetworkSettings,
-				Ports:             details.Ports,
-				Mounts:            details.Mounts,
-				Labels:            details.Labels,
-				ComposeInfo:       details.ComposeInfo,
-				IconLightURL:      details.IconLightURL,
-				IconDarkURL:       details.IconDarkURL,
-				RedeployDisabled:  details.RedeployDisabled,
-				AutoUpdateEnabled: details.AutoUpdateEnabled,
-				UpdateInfo:        details.UpdateInfo,
-				Hardened:          details.Hardened,
-				ActivityID:        mo.EmptyableToOption(strings.TrimSpace(activityID)).ToPointer(),
+				ID:               details.ID,
+				Name:             details.Name,
+				Image:            details.Image,
+				ImageID:          details.ImageID,
+				Created:          details.Created,
+				State:            details.State,
+				Config:           details.Config,
+				HostConfig:       details.HostConfig,
+				NetworkSettings:  details.NetworkSettings,
+				Ports:            details.Ports,
+				Mounts:           details.Mounts,
+				Labels:           details.Labels,
+				ComposeInfo:      details.ComposeInfo,
+				IconLightURL:     details.IconLightURL,
+				IconDarkURL:      details.IconDarkURL,
+				RedeployDisabled: details.RedeployDisabled,
+				Hardened:         details.Hardened,
+				ActivityID:       mo.EmptyableToOption(strings.TrimSpace(activityID)).ToPointer(),
 			},
 		},
 	}, nil
@@ -669,26 +657,24 @@ func (h *ContainerHandler) EditContainer(ctx context.Context, input *EditContain
 		Body: types.ApiResponse[types.ContainerDetails]{
 			Success: true,
 			Data: types.ContainerDetails{ //exhaustruct:enforce
-				ID:                details.ID,
-				Name:              details.Name,
-				Image:             details.Image,
-				ImageID:           details.ImageID,
-				Created:           details.Created,
-				State:             details.State,
-				Config:            details.Config,
-				HostConfig:        details.HostConfig,
-				NetworkSettings:   details.NetworkSettings,
-				Ports:             details.Ports,
-				Mounts:            details.Mounts,
-				Labels:            details.Labels,
-				ComposeInfo:       details.ComposeInfo,
-				IconLightURL:      details.IconLightURL,
-				IconDarkURL:       details.IconDarkURL,
-				RedeployDisabled:  details.RedeployDisabled,
-				AutoUpdateEnabled: details.AutoUpdateEnabled,
-				UpdateInfo:        details.UpdateInfo,
-				Hardened:          details.Hardened,
-				ActivityID:        mo.EmptyableToOption(strings.TrimSpace(activityID)).ToPointer(),
+				ID:               details.ID,
+				Name:             details.Name,
+				Image:            details.Image,
+				ImageID:          details.ImageID,
+				Created:          details.Created,
+				State:            details.State,
+				Config:           details.Config,
+				HostConfig:       details.HostConfig,
+				NetworkSettings:  details.NetworkSettings,
+				Ports:            details.Ports,
+				Mounts:           details.Mounts,
+				Labels:           details.Labels,
+				ComposeInfo:      details.ComposeInfo,
+				IconLightURL:     details.IconLightURL,
+				IconDarkURL:      details.IconDarkURL,
+				RedeployDisabled: details.RedeployDisabled,
+				Hardened:         details.Hardened,
+				ActivityID:       mo.EmptyableToOption(strings.TrimSpace(activityID)).ToPointer(),
 			},
 		},
 	}, nil
@@ -730,17 +716,4 @@ func (h *ContainerHandler) DeleteContainer(ctx context.Context, input *DeleteCon
 	activitylib.CompleteHandlerActivity(runtimeCtx, h.activityService, activityID, "Container deleted", nil)
 
 	return handlerutil.MessageOutput("Container deleted successfully", activityID), nil
-}
-
-func (h *ContainerHandler) SetAutoUpdate(ctx context.Context, input *SetAutoUpdateInput) (*handlerutil.Out[types.MessageResponse], error) {
-	containerName, err := h.containerService.GetContainerNameByReference(ctx, input.ContainerID)
-	if err != nil {
-		return nil, huma.Error404NotFound("container not found")
-	}
-
-	if setContainerAutoUpdateExclusionErr := h.settingsService.SetContainerAutoUpdateExclusion(ctx, containerName, !input.Body.Enabled); setContainerAutoUpdateExclusionErr != nil {
-		return nil, huma.Error500InternalServerError("failed to update auto-update setting")
-	}
-
-	return handlerutil.MessageOutput(kit.Ternary(input.Body.Enabled, "Auto-update enabled", "Auto-update disabled"), ""), nil
 }

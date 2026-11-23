@@ -7,7 +7,6 @@ export const STREAM_CHANNEL_ENVIRONMENTS = 'environments';
 export const STREAM_CHANNEL_ACTIVITIES = 'activities';
 export const STREAM_CHANNEL_EVENTS = 'events';
 export const STREAM_CHANNEL_VERSION = 'version';
-export const STREAM_CHANNEL_UPGRADE = 'arcane-upgrade';
 
 class StreamService extends BaseAPIService {
 	getClientStreamUrl(channels: string[], params: Record<string, string> = {}): string {
@@ -34,7 +33,7 @@ class StreamService extends BaseAPIService {
 			if (action === 'retry') {
 				return this.openClientStream(signal, channels, params, true);
 			}
-			if (action === 'redirect' || action === 'reload') {
+			if (action === 'redirect') {
 				return new Promise<Response>(() => {});
 			}
 		}

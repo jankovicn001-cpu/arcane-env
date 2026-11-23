@@ -126,17 +126,6 @@ func (m *EnvironmentMiddleware) Handle(c *echo.Context, next echo.HandlerFunc) e
 	if iconCatalog := kit.FromPtr(kit.FromPtr(user).Preferences.IconCatalog); iconCatalog != "" {
 		req.Header.Set(HeaderIconCatalog, iconCatalog)
 	}
-	req.Header.Del(HeaderUpdateInitiatorID)
-	req.Header.Del(HeaderUpdateInitiatorName)
-	req.Header.Del(HeaderUpdateInitiatorDisplayName)
-	if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "/containers/") && strings.HasSuffix(req.URL.Path, "/update") &&
-		kit.FromPtr(user).ID != "" {
-		req.Header.Set(HeaderUpdateInitiatorID, user.ID)
-		req.Header.Set(HeaderUpdateInitiatorName, user.Username)
-		if displayName := kit.FromPtr(user.DisplayName); displayName != "" {
-			req.Header.Set(HeaderUpdateInitiatorDisplayName, displayName)
-		}
-	}
 
 	accessToken, enabled, err := m.resolver(ctx, envID)
 	if err != nil {
@@ -330,7 +319,7 @@ func IsManagerLocalPath(method, suffix string) bool {
 
 	switch method + " " + suffix {
 	case "GET /events", "GET /swarm/join/candidates", "GET /swarm/nodes", "POST /swarm/join/agents", "POST /swarm/nodes/agents/reconcile",
-		"POST /system/upgrade/jobs", "GET /system/upgrade/jobs/current", "POST /tunnel/restart":
+		"POST /tunnel/restart":
 		return true
 	}
 

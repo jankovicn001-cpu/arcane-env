@@ -45,7 +45,7 @@ type (
 		Body      *types.JobSubmitRunInput `required:"false"`
 		ID        string                   `path:"id" doc:"Environment ID"`
 		JobID     string                   `path:"jobId" minLength:"1" doc:"Job ID"`
-		Action    string                   `query:"action" required:"true" enum:"run,restart" doc:"Job action"`
+		Action    string                   `query:"action" required:"true" enum:"run" doc:"Job action"`
 		RequestID string                   `header:"Idempotency-Key"`
 	}
 
@@ -87,13 +87,6 @@ func (h *JobSchedulesHandler) ListJobs(ctx context.Context, input *ListJobsInput
 }
 
 func (h *JobSchedulesHandler) RunJobAction(ctx context.Context, input *JobActionInput) (*RunJobOutput, error) {
-	if input.Action == "restart" {
-		return h.restartWorker(ctx, input)
-	}
-	return h.runJob(ctx, input)
-}
-
-func (h *JobSchedulesHandler) runJob(ctx context.Context, input *JobActionInput) (*RunJobOutput, error) {
 	if kit.FromPtr(input.Body).RunID != "" && input.RequestID != "" && input.RequestID != kit.FromPtr(input.Body).RunID {
 		return nil, huma.Error400BadRequest("Conflicting run IDs")
 	}
@@ -241,29 +234,6 @@ func (h *JobSchedulesHandler) acknowledgeRun(ctx context.Context, environmentID,
 		return nil
 	})
 	return result, err
-}
-
-func (h *JobSchedulesHandler) restartWorker(ctx context.Context, input *JobActionInput) (*RunJobOutput, error) {
-	if input.ID != "0" {
-		result, err := h.proxyRemoteJSON.JSON[types.JobRunResponse](ctx, input.ID, http.MethodPost, "/api/agents/0/jobs/"+input.JobID+"?action=restart", nil)
-		if err != nil {
-			return nil, err
-		}
-		return &RunJobOutput{Body: *result}, nil
-	}
-	workers, ok := h.jobService.scheduler.(types.WorkerController)
-	if !ok {
-		return nil, huma.Error503ServiceUnavailable("Scheduler unavailable")
-	}
-	if err := workers.RestartWatcher(ctx, input.JobID); err != nil {
-		return nil, jobHTTPError(err)
-	}
-	return &RunJobOutput{
-		Body: types.JobRunResponse{
-			Success: true,
-			Message: "Worker restart requested",
-		},
-	}, nil
 }
 
 func jobHTTPError(err error) error {

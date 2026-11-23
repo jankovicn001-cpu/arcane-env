@@ -38,7 +38,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/event"
 	"getarcane.dev/arcane/v3/internal/gitops/children/backup"
 	"getarcane.dev/arcane/v3/internal/gitrepo"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	projectpkg "getarcane.dev/arcane/v3/internal/project"
 	"getarcane.dev/arcane/v3/internal/scheduler/entityjobs"
 	"getarcane.dev/arcane/v3/internal/scheduler/flow/flowtest"
@@ -102,7 +101,7 @@ func setupGitOpsProjectTestDB(t *testing.T) *database.DB {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&projectpkg.Project{}, &settings.SettingVariable{}, &imageupdate.ImageUpdateRecord{}, &event.Event{}))
+	require.NoError(t, db.AutoMigrate(&projectpkg.Project{}, &settings.SettingVariable{}, &event.Event{}))
 	return &database.DB{DB: db}
 }
 

@@ -10,6 +10,7 @@ import (
 	"getarcane.dev/cli/v3/pkg/admin/notifications"
 	"getarcane.dev/cli/v3/pkg/admin/oidcmappings"
 	"getarcane.dev/cli/v3/pkg/admin/roles"
+	"getarcane.dev/cli/v3/pkg/admin/usergroups"
 	"getarcane.dev/cli/v3/pkg/admin/users"
 	"getarcane.dev/cli/v3/pkg/backups"
 )
@@ -23,6 +24,7 @@ func Command() *cobra.Command {
 	}
 	command.AddCommand(backups.Command())
 	command.AddCommand(users.Command())
+	command.AddCommand(usergroups.Command())
 	command.AddCommand(roles.Command())
 	command.AddCommand(oidcmappings.Command())
 	command.AddCommand(apikeys.Command())

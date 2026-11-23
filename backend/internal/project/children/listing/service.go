@@ -20,7 +20,6 @@ import (
 	"kit.getarcane.app/sys/cgroup"
 	"kit.getarcane.app/updater/labels"
 
-	"getarcane.dev/arcane/v3/internal/image"
 	"getarcane.dev/arcane/v3/pkg/iconcatalog"
 	"getarcane.dev/arcane/v3/pkg/pagination"
 	"getarcane.dev/arcane/v3/pkg/projects"
@@ -29,9 +28,17 @@ import (
 
 type (
 	Service struct {
-		containers    func(ctx context.Context) ([]container.Summary, error)
-		imageService  *image.ImageService
-		summarizeRuns func(imageRefs []string, services []types.ProjectRuntimeService, scoped map[string]*types.ImageUpdateInfo) *types.ProjectUpdateInfo
+		containers func(ctx context.Context) ([]container.Summary, error)
+	}
+
+	// Presentation holds a page of project rows and the metadata that decorates them.
+	Presentation struct {
+		SyncMode    func(syncID string) string
+		ProjectsDir string
+		Catalog     string
+		Records     []types.ProjectRecord
+		Details     []types.Project
+		Metas       []projects.ArcaneComposeMetadata
 	}
 
 	Snapshot struct {
@@ -54,16 +61,8 @@ type (
 	}
 )
 
-func New(
-	containers func(ctx context.Context) ([]container.Summary, error),
-	imageService *image.ImageService,
-	summarizeRuns func(imageRefs []string, services []types.ProjectRuntimeService, scoped map[string]*types.ImageUpdateInfo) *types.ProjectUpdateInfo,
-) *Service {
-	return &Service{
-		containers:    containers,
-		imageService:  imageService,
-		summarizeRuns: summarizeRuns,
-	}
+func New(containers func(ctx context.Context) ([]container.Summary, error)) *Service {
+	return &Service{containers: containers}
 }
 
 func (s *Service) Snapshot(ctx context.Context) Snapshot {
@@ -295,14 +294,14 @@ func Rows(roots []types.ProjectsDirectoryStatus, catalog string, records []types
 	return rows, inferredCounts
 }
 
-// records, details and metas must align by index.
-func ApplyPresentation(ctx context.Context, projectsDir, catalog string, records []types.ProjectRecord, details []types.Project, metas []projects.ArcaneComposeMetadata) []types.Project {
-	out := make([]types.Project, 0, len(details))
-	for i, d := range details {
-		icon := iconcatalog.Resolve(catalog, metas[i].ProjectIcon)
+// Records, Details and Metas must align by index.
+func ApplyPresentation(ctx context.Context, page Presentation) []types.Project {
+	out := make([]types.Project, 0, len(page.Details))
+	for i, d := range page.Details {
+		icon := iconcatalog.Resolve(page.Catalog, page.Metas[i].ProjectIcon)
 		services := make([]types.ProjectRuntimeService, 0, len(d.RuntimeServices))
 		for _, service := range d.RuntimeServices {
-			localIcon := iconcatalog.Resolve(catalog, cmp.Or(projects.FindArcaneIconSet(service.ContainerLabels), metas[i].ServiceIconSets[service.Name], metas[i].ProjectIcon))
+			localIcon := iconcatalog.Resolve(page.Catalog, cmp.Or(projects.FindArcaneIconSet(service.ContainerLabels), page.Metas[i].ServiceIconSets[service.Name], page.Metas[i].ProjectIcon))
 			services = append(services, types.ProjectRuntimeService{ //exhaustruct:enforce
 				ContainerLabels:  service.ContainerLabels,
 				ImageID:          service.ImageID,
@@ -326,7 +325,6 @@ func ApplyPresentation(ctx context.Context, projectsDir, catalog string, records
 			ActivityID:            d.ActivityID,
 			LastSyncCommit:        d.LastSyncCommit,
 			GitOpsManagedBy:       d.GitOpsManagedBy,
-			UpdateInfo:            d.UpdateInfo,
 			ArchivedAt:            d.ArchivedAt,
 			Status:                d.Status,
 			DirName:               d.DirName,
@@ -340,7 +338,7 @@ func ApplyPresentation(ctx context.Context, projectsDir, catalog string, records
 			Name:                  d.Name,
 			GitRepositoryURL:      d.GitRepositoryURL,
 			GitRepositoryProvider: d.GitRepositoryProvider,
-			GitOpsSyncMode:        d.GitOpsSyncMode,
+			GitOpsSyncMode:        page.SyncMode(strings.TrimSpace(kit.FromPtr(d.GitOpsManagedBy))),
 			IconLightURL:          icon.IconLightURL,
 			RelativePath:          d.RelativePath,
 			ProjectsRoot:          d.ProjectsRoot,
@@ -355,15 +353,14 @@ func ApplyPresentation(ctx context.Context, projectsDir, catalog string, records
 			ComposeName:           d.ComposeName,
 			Volumes:               d.Volumes,
 			Networks:              d.Networks,
-			URLs:                  metas[i].ProjectURLS,
+			URLs:                  page.Metas[i].ProjectURLS,
 			IncludeFiles:          d.IncludeFiles,
 			RunningCount:          d.RunningCount,
 			ServiceCount:          d.ServiceCount,
-			IsDiscovered:          d.IsDiscovered,
 			IsArchived:            d.IsArchived,
 			HasBuildDirective:     d.HasBuildDirective,
 			RedeployDisabled:      d.RedeployDisabled,
-			ConfigurationError:    projects.CheckProjectEnvAccess(ctx, projectsDir, records[i].Path),
+			ConfigurationError:    projects.CheckProjectEnvAccess(ctx, page.ProjectsDir, page.Records[i].Path),
 		})
 	}
 	return out
@@ -380,119 +377,6 @@ func KnownComposeProjectNames(records []types.ProjectRecord) map[string]struct{}
 		}
 	}
 	return known
-}
-
-func (s *Service) CountDiscoveredUpdates(ctx context.Context, allContainers []container.Summary, known map[string]struct{}, catalog string) int {
-	composeContainers := make([]container.Summary, 0, len(allContainers))
-	for _, c := range allContainers {
-		if docker.ComposeProjectLabel(c.Labels) != "" {
-			composeContainers = append(composeContainers, c)
-		}
-	}
-	if len(composeContainers) == 0 {
-		return 0
-	}
-	// Only rows with a pending update are returned, so the length is the count.
-	return len(s.DiscoveredUpdateRows(ctx, composeContainers, known, catalog))
-}
-
-func (s *Service) DiscoveredUpdateRows(
-	ctx context.Context,
-	composeContainers []container.Summary,
-	knownProjectNames map[string]struct{},
-	iconCatalog string,
-) []types.Project {
-	containersByProject := make(map[string][]container.Summary)
-	for _, c := range composeContainers {
-		if docker.ComposeServiceLabel(c.Labels) == "" || c.Labels[api.HookLabel] != "" || c.Labels[projects.JobRunLabel] != "" || c.Labels[api.OneoffLabel] == "True" {
-			continue
-		}
-		projectName := docker.ComposeProjectLabel(c.Labels)
-		if projectName == "" {
-			continue
-		}
-		if _, exists := knownProjectNames[projectName]; exists {
-			continue
-		}
-		if normalized := projects.NormalizeProjectName(projectName); normalized != "" {
-			if _, exists := knownProjectNames[normalized]; exists {
-				continue
-			}
-		}
-
-		containersByProject[projectName] = append(containersByProject[projectName], c)
-	}
-
-	if len(containersByProject) == 0 {
-		return nil
-	}
-
-	scoped := func() map[string]*types.ImageUpdateInfo {
-		info, err := s.imageService.GetUpdateInfoByContainers(ctx, composeContainers)
-		if err != nil {
-			slog.WarnContext(ctx, "failed to fetch discovered project tag updates", "error", err)
-			return nil
-		}
-		return info
-	}()
-	rows := make([]types.Project, 0, len(containersByProject))
-	for projectName, projectContainers := range containersByProject {
-		runtimeServices := make([]types.ProjectRuntimeService, 0, len(projectContainers))
-		seenServices := make(map[string]struct{}, len(projectContainers))
-		for _, c := range projectContainers {
-			imageRef := strings.TrimSpace(c.Image)
-			serviceName := cmp.Or(docker.ComposeServiceLabel(c.Labels), c.ID)
-			key := serviceName + "\x00" + imageRef
-			if _, exists := seenServices[key]; exists || imageRef == "" {
-				continue
-			}
-			seenServices[key] = struct{}{}
-			resolvedIcon := iconcatalog.Resolve(iconCatalog, projects.FindArcaneIconSet(c.Labels))
-			runtimeServices = append(runtimeServices, types.ProjectRuntimeService{
-				Name:            serviceName,
-				Image:           imageRef,
-				Status:          string(c.State),
-				ContainerID:     c.ID,
-				ImageID:         c.ImageID,
-				ContainerLabels: c.Labels,
-				ContainerName:   docker.ContainerNameFromNames(c.Names),
-				Ports:           projects.FormatDockerPorts(c.Ports),
-				IconLightURL:    resolvedIcon.IconLightURL,
-				IconDarkURL:     resolvedIcon.IconDarkURL,
-			})
-		}
-		checkServices := make([]types.ProjectRuntimeService, 0, len(projectContainers))
-		for _, c := range projectContainers {
-			checkServices = append(checkServices, types.ProjectRuntimeService{
-				ContainerLabels: c.Labels,
-				ImageID:         c.ImageID,
-				Name:            docker.ComposeServiceLabel(c.Labels),
-				Image:           c.Image,
-				ContainerID:     c.ID,
-			})
-		}
-		updateInfo := s.summarizeRuns(projects.ImageRefsFromRuntimeServices(runtimeServices), checkServices, scoped)
-		if !kit.FromPtr(updateInfo).HasUpdate {
-			continue
-		}
-
-		serviceCount, runningCount := ServiceCounts(runtimeServices)
-		rows = append(rows, types.Project{
-			ID:   "compose:" + projectName,
-			Name: projectName,
-			// Unlike tracked rows, a discovered project without services is unknown.
-			Status:          ProjectStatus(runtimeServices),
-			ServiceCount:    serviceCount,
-			RunningCount:    runningCount,
-			IsDiscovered:    true,
-			CreatedAt:       kit.Ternary(updateInfo.LastCheckedAt != nil, kit.FromPtr(updateInfo.LastCheckedAt).Format(time.RFC3339), ""),
-			UpdatedAt:       kit.Ternary(updateInfo.LastCheckedAt != nil, kit.FromPtr(updateInfo.LastCheckedAt).Format(time.RFC3339), ""),
-			RuntimeServices: runtimeServices,
-			UpdateInfo:      updateInfo,
-		})
-	}
-
-	return rows
 }
 
 func ApplyProjectTagsDBFilter(query *gorm.DB, filterValue string) *gorm.DB {
@@ -577,12 +461,6 @@ func PaginationConfig() pagination.Config[types.Project] {
 				Key: "status",
 				Fn: func(p types.Project, filterValue string) bool {
 					return strings.EqualFold(strings.TrimSpace(p.Status), strings.TrimSpace(filterValue))
-				},
-			},
-			{
-				Key: "updates",
-				Fn: func(p types.Project, filterValue string) bool {
-					return strings.EqualFold(cmp.Or(strings.TrimSpace(kit.FromPtr(p.UpdateInfo).Status), "unknown"), strings.TrimSpace(filterValue))
 				},
 			},
 			{

@@ -552,3 +552,95 @@ test(
 		}
 	}
 );
+
+test(
+	'environment-first navigation hides the all-environments resource pages from the sidebar',
+	{ timeout: 120_000 },
+	async ({ browser, page }) => {
+		const suffix = Date.now().toString(36);
+		const username = `e2e-env-first-${suffix}`;
+		const password = 'E2e-env-first-user-123!';
+		let user: AccountUser | null = null;
+		let navContext: BrowserContext | null = null;
+
+		try {
+			user = await readApiData<AccountUser>(
+				await page.request.post('/api/users', {
+					data: { username, password, email: `${username}@example.test` }
+				}),
+				`Create navigation user ${username}`
+			);
+			await readApiData<unknown[]>(
+				await page.request.put(`/api/users/${user.id}/roles`, {
+					data: { assignments: [{ roleId: 'role_viewer' }] }
+				}),
+				`Assign Viewer role to ${username}`
+			);
+
+			navContext = await browser.newContext({
+				baseURL: baseURL,
+				storageState: { cookies: [], origins: [] },
+				extraHTTPHeaders: { 'X-Forwarded-For': '198.18.0.4' }
+			});
+			const navPage = await navContext.newPage();
+			navPage.setDefaultTimeout(12_000);
+			const pageErrors = installPageErrorCollector(navPage);
+
+			try {
+				await login(navPage, username, password);
+				await navPage.goto('/account?tab=preferences');
+
+				const resources = navPage.locator('[data-slot="sidebar-group"]').filter({
+					has: navPage.locator('[data-slot="sidebar-group-label"]', { hasText: /^Resources$/ })
+				});
+				const globalLinks = ['Containers', 'Images', 'Networks', 'Volumes'].map((name) =>
+					resources.getByRole('link', { name, exact: true })
+				);
+				const environmentsLink = resources.getByRole('link', { name: 'Environments', exact: true });
+				await expect(environmentsLink).toBeVisible();
+				for (const link of globalLinks) await expect(link).toBeVisible();
+
+				const toggle = navPage.locator('#account-environment-first-navigation');
+				await expect(toggle).toHaveAttribute('data-state', 'unchecked');
+				const enableResponse = await waitForProfileUpdate(navPage, () => toggle.click());
+				expect(enableResponse.request().postDataJSON()).toEqual({
+					preferences: { environmentFirstNavigation: true }
+				});
+				for (const link of globalLinks) await expect(link).toHaveCount(0);
+				await expect(environmentsLink).toBeVisible();
+
+				await navPage.locator('#account-default-landing-page').click();
+				await expect(
+					navPage.getByRole('option', { name: 'Environments', exact: true })
+				).toBeVisible();
+				await expect(navPage.getByRole('option', { name: 'Containers', exact: true })).toHaveCount(
+					0
+				);
+				await navPage.keyboard.press('Escape');
+
+				await navPage.reload();
+				await expect(toggle).toHaveAttribute('data-state', 'checked');
+				await expect(environmentsLink).toBeVisible();
+				for (const link of globalLinks) await expect(link).toHaveCount(0);
+
+				const disableResponse = await waitForProfileUpdate(navPage, () => toggle.click());
+				expect(disableResponse.request().postDataJSON()).toEqual({
+					preferences: { environmentFirstNavigation: false }
+				});
+				for (const link of globalLinks) await expect(link).toBeVisible();
+				await expect(environmentsLink).toBeVisible();
+			} finally {
+				pageErrors.stop();
+				expect(
+					pageErrors.errors,
+					`Environment-first navigation page errors:\n${formatPageErrors(pageErrors.errors)}`
+				).toEqual([]);
+			}
+		} finally {
+			await navContext?.close();
+			if (user) {
+				await removeApiResource(page, `/api/users/${user.id}`);
+			}
+		}
+	}
+);

@@ -132,7 +132,7 @@ func TestHTTP2APIResponsesDoNotUseAPIGzip(t *testing.T) {
 			Project:   project.New(project.ModuleParams{Service: &project.ProjectService{}}),
 			Container: container.New(&container.ContainerService{}, nil, nil, nil),
 			Swarm:     swarm.New(&swarm.SwarmService{}, nil, nil, nil),
-			System:    system.New(&system.SystemService{}, nil, nil),
+			System:    system.New(&system.SystemService{}, nil),
 			Health:    health.New(&health.Service{}),
 			Settings:  newTestSettingsModule(t, cfg),
 		},

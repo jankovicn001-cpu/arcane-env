@@ -11,7 +11,6 @@ import (
 
 	"getarcane.dev/arcane/v3/cli/admin"
 	"getarcane.dev/arcane/v3/cli/recovery"
-	"getarcane.dev/arcane/v3/cli/upgrade"
 	"getarcane.dev/arcane/v3/internal/bootstrap"
 	"getarcane.dev/arcane/v3/internal/config"
 	"getarcane.dev/cli/v3/pkg/generate"
@@ -33,7 +32,6 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(admin.AdminCmd)
-	rootCmd.AddCommand(upgrade.UpgradeCmd)
 	rootCmd.AddCommand(recovery.RestoreCmd)
 	rootCmd.AddCommand(generate.Command())
 }

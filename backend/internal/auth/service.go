@@ -588,7 +588,7 @@ func (s *AuthService) updateOidcUser(ctx context.Context, localUser *user.User, 
 	return updated, nil
 }
 
-// Manual assignments are untouched.
+// Manual assignments and memberships are untouched.
 func (s *AuthService) syncOidcRoleAssignments(ctx context.Context, localUser *user.User, userInfo types.OidcUserInfo, tokenResp *types.OidcTokenResponse) error {
 	if localUser == nil {
 		return nil
@@ -603,9 +603,13 @@ func (s *AuthService) syncOidcRoleAssignments(ctx context.Context, localUser *us
 	err = s.roleService.ReplaceUserAssignments(ctx, localUser.ID, role.RoleAssignmentSourceOidc, role.MappedAssignments(mappings, groups))
 	if errors.Is(err, common.ErrNoGlobalAdminRemains) {
 		slog.WarnContext(ctx, "OIDC role sync would remove the last global admin; keeping existing assignments", "userId", localUser.ID)
-		return nil
+		err = nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// User groups never count toward the last-admin guard, so their memberships always follow the claims.
+	return s.roleService.ReplaceUserGroupMemberships(ctx, localUser.ID, role.RoleAssignmentSourceOidc, groups)
 }
 
 func (s *AuthService) extractOidcGroups(ctx context.Context, userInfo types.OidcUserInfo, tokenResp *types.OidcTokenResponse) []string {

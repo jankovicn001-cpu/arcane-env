@@ -200,9 +200,7 @@ test.describe('Environment settings pages', () => {
 
 	test('shows automation settings without job status', async ({ page }) => {
 		await page.goto('/settings/automations?env=0');
-		await expect(
-			page.getByRole('switch', { name: 'Image Update Watcher', exact: true })
-		).toBeVisible();
+		await expect(page.getByRole('switch', { name: 'Scheduled Prune', exact: true })).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Run Now' })).toHaveCount(0);
 
 		await page
@@ -357,8 +355,6 @@ test.describe('Notifications', () => {
 				notification: true,
 				title: '',
 				events: {
-					image_update: true,
-					container_update: true,
 					vulnerability_found: true,
 					prune_report: true,
 					auto_heal: true

@@ -12,6 +12,7 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { CloseIcon } from '#lib/icons/index.js';
 	import { m } from '#lib/paraglide/messages.js';
+	import type { EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
 	import type { NetworkIPAMConfig, NetworkCreateOptions } from '#lib/types/network.js';
 	import { destinationEnvironmentId } from '#lib/utils/environments.js';
 	import { parseKeyValuePairs } from '#lib/utils/form-parsers.js';
@@ -21,14 +22,16 @@
 
 	type CreateNetworkFormProps = {
 		open: boolean;
+		/** Destinations offered; defaults to every shown environment. */
+		environments?: EnvironmentRef[];
 		onSubmit: (name: string, options: NetworkCreateOptions, environmentId: string) => void;
 		isLoading: boolean;
 	};
 
-	let { open = $bindable(false), onSubmit, isLoading }: CreateNetworkFormProps = $props();
+	let { open = $bindable(false), environments, onSubmit, isLoading }: CreateNetworkFormProps = $props();
 
 	let pickedEnvironmentId = $state('');
-	const environmentId = $derived(destinationEnvironmentId(pickedEnvironmentId, 'networks:create'));
+	const environmentId = $derived(destinationEnvironmentId(pickedEnvironmentId, 'networks:create', environments));
 
 	const drivers = [
 		{ value: 'bridge', label: m.bridge() },
@@ -145,6 +148,7 @@
 		<EnvironmentDestinationSelect
 			bind:value={() => environmentId, (value) => (pickedEnvironmentId = value)}
 			permission="networks:create"
+			{environments}
 			variant="field"
 		/>
 		<div class="space-y-2">

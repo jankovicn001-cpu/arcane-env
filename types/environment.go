@@ -68,13 +68,15 @@ type (
 
 		AgentHost *AgentHostInfo `json:"agentHost,omitempty" readOnly:"true"`
 
-		AgentTunnelStats  *AgentTunnelStats `json:"agentTunnelStats,omitempty" readOnly:"true"`
-		ID                string            `json:"id" readOnly:"true"`
-		Name              string            `json:"name,omitempty" unorm:"nfc" trim:"true"`
-		ApiUrl            string            `json:"apiUrl" readOnly:"true"`
-		Status            string            `json:"status" readOnly:"true"`
-		AgentCapabilities []string          `json:"agentCapabilities,omitempty" readOnly:"true"`
-		Enabled           bool              `json:"enabled" required:"false"`
+		AgentTunnelStats  *AgentTunnelStats    `json:"agentTunnelStats,omitempty" readOnly:"true"`
+		ID                string               `json:"id" readOnly:"true"`
+		Name              string               `json:"name,omitempty" unorm:"nfc" trim:"true"`
+		Group             *EnvironmentGroupRef `json:"group,omitempty" readOnly:"true" doc:"Environment group the agent belongs to"`
+		GroupID           string               `json:"groupId,omitempty" required:"false" doc:"ID of the environment group the agent belongs to; an empty string on update unassigns it"`
+		ApiUrl            string               `json:"apiUrl" readOnly:"true"`
+		Status            string               `json:"status" readOnly:"true"`
+		AgentCapabilities []string             `json:"agentCapabilities,omitempty" readOnly:"true"`
+		Enabled           bool                 `json:"enabled" required:"false"`
 	}
 
 	EnvironmentStreamEvent struct {

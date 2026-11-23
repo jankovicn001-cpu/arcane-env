@@ -9,12 +9,6 @@
 	description={m.settings_category_automations_description()}
 	permissions={['jobs:read']}
 	keys={[
-		'pollingEnabled',
-		'imageEventWatcherEnabled',
-		'autoUpdate',
-		'autoUpdateDelay',
-		'autoUpdateExcludedContainers',
-		'githubToken',
 		'scheduledPruneEnabled',
 		'vulnerabilityScanEnabled',
 		'autoHealEnabled',

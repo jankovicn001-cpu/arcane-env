@@ -18,6 +18,7 @@ export type RoleAssignment = {
 	userId: string;
 	roleId: string;
 	environmentId?: string;
+	environmentGroupId?: string;
 	source: RoleAssignmentSource;
 	createdAt: string;
 };
@@ -25,7 +26,22 @@ export type RoleAssignment = {
 export type UserRoleAssignmentInput = {
 	roleId: string;
 	environmentId?: string;
+	environmentGroupId?: string;
 };
+
+type EnvironmentAccessGrant = {
+	id: string;
+	roleId: string;
+	roleName: string;
+	source: RoleAssignmentSource;
+};
+
+/** A role granted on an environment group, either to one user or to a user group. */
+export type EnvironmentAccessEntry = EnvironmentAccessGrant &
+	(
+		| { principalType: 'user'; userId: string; username: string; displayName?: string }
+		| { principalType: 'group'; userGroupId: string; userGroupName: string }
+	);
 
 export type SetUserRoleAssignments = {
 	assignments: UserRoleAssignmentInput[];
@@ -38,6 +54,7 @@ export type OidcRoleMapping = {
 	claimValue: string;
 	roleId: string;
 	environmentId?: string | null;
+	environmentGroupId?: string | null;
 	source: OidcMappingSource;
 	createdAt: string;
 	updatedAt?: string;

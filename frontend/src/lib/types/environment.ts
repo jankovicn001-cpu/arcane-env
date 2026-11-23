@@ -32,9 +32,23 @@ export type AgentTunnelStats = {
 	sessions: number;
 };
 
+/** An environment group: the user-facing "Environment" that agents belong to. */
+export type EnvironmentGroup = {
+	id: string;
+	name: string;
+	description: string;
+	environmentCount: number;
+	createdAt: string;
+	updatedAt: string;
+};
+
+export type EnvironmentGroupRef = Pick<EnvironmentGroup, 'id' | 'name' | 'description'>;
+
 export type Environment = {
 	id: string;
 	name: string;
+	groupId?: string;
+	group?: EnvironmentGroupRef;
 	apiUrl: string;
 	status: EnvironmentStatus;
 	enabled: boolean;

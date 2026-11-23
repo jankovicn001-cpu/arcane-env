@@ -8,15 +8,18 @@
 	import * as ResponsiveDialog from '#lib/components/ui/responsive-dialog/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import { imageService } from '#lib/services/image-service.js';
+	import type { EnvironmentRef } from '#lib/stores/environment.store.svelte.js';
 	import { destinationEnvironmentId } from '#lib/utils/environments.js';
 	import { createForm, preventDefault } from '#lib/utils/settings.svelte.js';
 
 	type ImagePullFormProps = {
 		open: boolean;
+		/** Destinations offered; defaults to every shown environment. */
+		environments?: EnvironmentRef[];
 		onPullFinished?: (success: boolean, imageName?: string, error?: string) => void;
 	};
 
-	let { open = $bindable(false), onPullFinished = () => {} }: ImagePullFormProps = $props();
+	let { open = $bindable(false), environments, onPullFinished = () => {} }: ImagePullFormProps = $props();
 
 	const formSchema = z.object({
 		imageRef: z.string().min(1, m.images_image_required()),
@@ -30,7 +33,7 @@
 
 	let isPulling = $state(false);
 	let pickedEnvironmentId = $state('');
-	const environmentId = $derived(destinationEnvironmentId(pickedEnvironmentId, 'images:pull'));
+	const environmentId = $derived(destinationEnvironmentId(pickedEnvironmentId, 'images:pull', environments));
 
 	async function handleSubmit() {
 		const data = form.validate();
@@ -91,6 +94,7 @@
 		<EnvironmentDestinationSelect
 			bind:value={() => environmentId, (value) => (pickedEnvironmentId = value)}
 			permission="images:pull"
+			{environments}
 			variant="field"
 		/>
 		<FormInput

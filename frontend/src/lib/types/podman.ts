@@ -1,6 +1,5 @@
 export const PODMAN_SYSTEMD_UNIT_LABEL = 'PODMAN_SYSTEMD_UNIT';
 
-export type PodmanAutoUpdateMode = 'rest' | 'systemd' | 'unavailable';
 export type PodmanSystemdScope = 'system' | 'user';
 export type QuadletType = 'container' | 'pod' | 'kube' | 'network' | 'volume' | 'image' | 'build' | 'artifact';
 export type KubeGenerateType = 'pod' | 'service' | 'deployment' | 'daemonset' | 'job';
@@ -25,7 +24,6 @@ export interface PodmanStatus {
 	rootless: boolean;
 	quadletsSupported: boolean;
 	quadletAppsSupported: boolean;
-	autoUpdateMode: PodmanAutoUpdateMode;
 	systemdAvailable: boolean;
 	systemdScope?: PodmanSystemdScope;
 	systemdReason?: string;
@@ -484,28 +482,4 @@ export type PodmanSecretUpdateRequest = Omit<PodmanSecretCreateRequest, 'name'>;
 
 export interface PodmanSecretCreateResponse {
 	id: string;
-}
-
-export interface PodmanAutoUpdateOptions {
-	dryRun?: boolean;
-	rollback?: boolean;
-	tlsVerify?: boolean;
-	authfile?: string;
-	filters?: Record<string, string[]>;
-}
-
-export interface PodmanAutoUpdateReport {
-	containerId: string;
-	containerName: string;
-	imageName: string;
-	policy: string;
-	systemdUnit: string;
-	updated: string;
-}
-
-export interface PodmanAutoUpdateResult {
-	mode: PodmanAutoUpdateMode;
-	reports: PodmanAutoUpdateReport[] | null;
-	errors: string[] | null;
-	unit?: PodmanUnitStatus;
 }

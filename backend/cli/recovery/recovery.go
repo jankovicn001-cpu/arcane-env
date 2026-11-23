@@ -24,7 +24,6 @@ import (
 	"kit.getarcane.app/docker/compat"
 	"kit.getarcane.app/sys/crypto"
 
-	"getarcane.dev/arcane/v3/cli/upgrade"
 	"getarcane.dev/arcane/v3/internal/activity"
 	"getarcane.dev/arcane/v3/internal/backup"
 	"getarcane.dev/arcane/v3/internal/config"
@@ -153,8 +152,8 @@ func runRestore(cmd *cobra.Command, _ []string) error {
 	if finalizeRestoredBackupErr := finalizeRestoredBackup(ctx, manifest.Environment, manifest.BackupID, manifest.ActivityID, request); finalizeRestoredBackupErr != nil {
 		return fmt.Errorf("finalize restored system backup: %w", finalizeRestoredBackupErr)
 	}
-	if upgradeContainerErr := upgrade.UpgradeContainer(ctx, dockerClient, inspect.Container, request.ContainerImage, "", manifest.Environment); upgradeContainerErr != nil {
-		return fmt.Errorf("recreate Arcane container with recovered configuration: %w", upgradeContainerErr)
+	if recreateErr := recreateContainer(ctx, dockerClient, inspect.Container, request.ContainerImage, manifest.Environment); recreateErr != nil {
+		return fmt.Errorf("recreate Arcane container with recovered configuration: %w", recreateErr)
 	}
 	return nil
 }

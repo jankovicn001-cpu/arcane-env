@@ -36,9 +36,7 @@ import (
 	"kit.getarcane.app/docker/compat"
 	dockertypes "kit.getarcane.app/docker/types"
 	"kit.getarcane.app/sys/cgroup"
-	"kit.getarcane.app/updater"
 	"kit.getarcane.app/updater/labels"
-	"kit.getarcane.app/updater/pkg/utils/tagpolicy"
 
 	"getarcane.dev/arcane/v3/internal/common"
 	"getarcane.dev/arcane/v3/internal/container/children/stats"
@@ -721,7 +719,7 @@ func (s *ContainerService) RedeployContainer(ctx context.Context, containerID st
 		ContainerID:        containerInfo.ID,
 		CurrentContainerID: currentContainerID,
 	}) {
-		err = errors.New("arcane cannot redeploy itself; use the system upgrade flow (Settings -> Updates) instead")
+		err = common.ErrSelfRedeployBlocked
 		s.eventService.LogErrorEvent(ctx, event.ResourceEvent{
 			Type:          event.EventTypeContainerError,
 			ResourceType:  "container",
@@ -1460,7 +1458,7 @@ func (s *ContainerService) EditContainer(ctx context.Context, containerID string
 		ContainerID:        containerInfo.ID,
 		CurrentContainerID: currentContainerID,
 	}) {
-		err = errors.New("arcane cannot edit itself; use the system upgrade flow (Settings -> Updates) instead")
+		err = errors.New("arcane cannot edit itself")
 		s.eventService.LogErrorEvent(ctx, event.ResourceEvent{
 			Type:          event.EventTypeContainerError,
 			ResourceType:  "container",
@@ -1537,15 +1535,6 @@ func (s *ContainerService) GetContainerDetails(ctx context.Context, id string) (
 
 	details := types.NewContainerDetails(containerInspect)
 	currentContainerID, currentContainerErr := cgroup.CurrentContainerID()
-	updates, err := s.imageService.GetUpdateInfoByContainers(ctx, []container.Summary{{
-		ID:      details.ID,
-		Image:   details.Image,
-		ImageID: details.ImageID,
-		Labels:  details.Labels,
-	}})
-	if err != nil {
-		slog.WarnContext(ctx, "Failed to fetch container update info", "error", err)
-	}
 	imageInspect, err := s.dockerService.Call(ctx, func(ctx context.Context, dockerClient *client.Client) (client.ImageInspectResult, error) {
 		return dockerClient.ImageInspect(ctx, details.ImageID)
 	})
@@ -1576,9 +1565,6 @@ func (s *ContainerService) GetContainerDetails(ctx context.Context, id string) (
 			ContainerID:        details.ID,
 			CurrentContainerID: currentContainerID,
 		}),
-		AutoUpdateEnabled: !labels.IsUpdateDisabled(details.Labels) &&
-			!docker.ContainerNameExcluded([]string{details.Name}, docker.ExcludedContainerNameSet(s.settingsService.GetStringSetting(ctx, "autoUpdateExcludedContainers"))),
-		UpdateInfo: updates[details.ID],
 		Hardened:   dhi.Info(kit.FromPtr(imageInspect.Config).Labels, time.Now()),
 		ActivityID: details.ActivityID,
 	}, nil
@@ -1901,13 +1887,8 @@ func (s *ContainerService) ListContainersPaginated(
 	}
 
 	dockerContainers = FilterExcludedContainers(dockerContainers, includeInternal, includeHidden)
-	// Update lookup failures degrade to missing status rather than a failed list.
-	updateInfoMap, err := s.imageService.GetUpdateInfoByContainers(ctx, dockerContainers)
-	if err != nil {
-		slog.WarnContext(ctx, "Failed to fetch container update info", "error", err)
-	}
 	currentContainerID, currentContainerErr := cgroup.CurrentContainerID()
-	items := s.BuildSummaries(ctx, dockerContainers, updateInfoMap, currentContainerID, currentContainerErr)
+	items := BuildSummaries(dockerContainers, currentContainerID, currentContainerErr)
 
 	config := s.buildContainerPaginationConfig()
 	counts := s.CalculateStatusCounts(items)
@@ -1952,28 +1933,25 @@ func (s *ContainerService) ListContainersPaginated(
 		sampled := make([]types.ContainerSummary, 0, len(filtered))
 		for _, item := range filtered {
 			sampled = append(sampled, types.ContainerSummary{ //exhaustruct:enforce
-				EnvironmentTag:    item.EnvironmentTag,
-				ID:                item.ID,
-				Names:             item.Names,
-				Image:             item.Image,
-				ImageID:           item.ImageID,
-				Command:           item.Command,
-				Created:           item.Created,
-				Ports:             item.Ports,
-				Labels:            item.Labels,
-				State:             item.State,
-				Status:            item.Status,
-				HostConfig:        item.HostConfig,
-				NetworkSettings:   item.NetworkSettings,
-				Mounts:            item.Mounts,
-				IconLightURL:      item.IconLightURL,
-				IconDarkURL:       item.IconDarkURL,
-				UpdateStrategy:    item.UpdateStrategy,
-				UpdateInfo:        item.UpdateInfo,
-				RedeployDisabled:  item.RedeployDisabled,
-				AutoUpdateEnabled: item.AutoUpdateEnabled,
-				Hidden:            item.Hidden,
-				ResourceSample:    samples[item.ID],
+				EnvironmentTag:   item.EnvironmentTag,
+				ID:               item.ID,
+				Names:            item.Names,
+				Image:            item.Image,
+				ImageID:          item.ImageID,
+				Command:          item.Command,
+				Created:          item.Created,
+				Ports:            item.Ports,
+				Labels:           item.Labels,
+				State:            item.State,
+				Status:           item.Status,
+				HostConfig:       item.HostConfig,
+				NetworkSettings:  item.NetworkSettings,
+				Mounts:           item.Mounts,
+				IconLightURL:     item.IconLightURL,
+				IconDarkURL:      item.IconDarkURL,
+				RedeployDisabled: item.RedeployDisabled,
+				Hidden:           item.Hidden,
+				ResourceSample:   samples[item.ID],
 			})
 		}
 
@@ -2004,7 +1982,6 @@ func (s *ContainerService) GetContainerStatusCounts(ctx context.Context, opts St
 	}
 	containers = FilterExcludedContainers(containers, opts.IncludeInternal, opts.IncludeHidden)
 	running, unhealthy := 0, 0
-	standalone := make([]container.Summary, 0, len(containers))
 	for _, c := range containers {
 		if c.State == "running" {
 			running++
@@ -2012,38 +1989,13 @@ func (s *ContainerService) GetContainerStatusCounts(ctx context.Context, opts St
 		if strings.Contains(c.Status, "(unhealthy)") {
 			unhealthy++
 		}
-		if docker.ComposeProjectLabel(c.Labels) == "" {
-			standalone = append(standalone, c)
-		}
-	}
-	updates, updatesErr := s.CountPendingUpdates(ctx, standalone)
-	if updatesErr != nil {
-		slog.WarnContext(ctx, "Failed to count pending container updates", "error", updatesErr)
 	}
 	return types.ContainerStatusCounts{
 		RunningContainers:   running,
 		StoppedContainers:   len(containers) - running,
 		TotalContainers:     len(containers),
 		UnhealthyContainers: unhealthy,
-		UpdatesAvailable:    updates,
 	}, nil
-}
-
-func (s *ContainerService) CountPendingUpdates(ctx context.Context, containers []container.Summary) (int, error) {
-	if len(containers) == 0 {
-		return 0, nil
-	}
-	updates, err := s.imageService.GetUpdateInfoByContainers(ctx, containers)
-	if err != nil {
-		return 0, fmt.Errorf("failed to resolve pending container updates: %w", err)
-	}
-	count := 0
-	for _, info := range updates {
-		if info != nil && info.HasUpdate {
-			count++
-		}
-	}
-	return count, nil
 }
 
 func (s *ContainerService) AggregateContainerCounts(ctx context.Context) (types.ApiResponse[types.ContainerStatusCounts], error) {
@@ -2055,7 +2007,6 @@ func (s *ContainerService) AggregateContainerCounts(ctx context.Context) (types.
 				StoppedContainers:   counts.StoppedContainers + environment.Data.StoppedContainers,
 				TotalContainers:     counts.TotalContainers + environment.Data.TotalContainers,
 				UnhealthyContainers: counts.UnhealthyContainers + environment.Data.UnhealthyContainers,
-				UpdatesAvailable:    counts.UpdatesAvailable + environment.Data.UpdatesAvailable,
 			}
 		}
 		return counts
@@ -2228,19 +2179,10 @@ func FilterExcludedContainers(containers []container.Summary, includeInternal, i
 	return filtered
 }
 
-func (s *ContainerService) BuildSummaries(
-	ctx context.Context,
-	containers []container.Summary,
-	updateInfoMap map[string]*types.ImageUpdateInfo,
-	currentContainerID string,
-	currentContainerErr error,
-) []types.ContainerSummary {
+func BuildSummaries(containers []container.Summary, currentContainerID string, currentContainerErr error) []types.ContainerSummary {
 	items := make([]types.ContainerSummary, 0, len(containers))
-	excluded := docker.ExcludedContainerNameSet(s.settingsService.GetStringSetting(ctx, "autoUpdateExcludedContainers"))
 	for _, dc := range containers {
 		summary := types.NewContainerSummary(dc)
-		policy := updater.DefaultLabelPolicy().TagPolicy(dc.Labels)
-		resolved, policyErr := tagpolicy.Resolve(dc.Image, policy)
 		hidden, _ := kit.ParseBool(dc.Labels[selfcontainer.HiddenResourceLabel])
 		items = append(items, types.ContainerSummary{ //exhaustruct:enforce
 			EnvironmentTag:  summary.EnvironmentTag,
@@ -2259,17 +2201,14 @@ func (s *ContainerService) BuildSummaries(
 			Mounts:          summary.Mounts,
 			IconLightURL:    summary.IconLightURL,
 			IconDarkURL:     summary.IconDarkURL,
-			UpdateStrategy:  kit.Ternary(policyErr != nil, cmp.Or(policy.Strategy, "auto"), resolved.Strategy),
-			UpdateInfo:      updateInfoMap[dc.ID],
 			RedeployDisabled: labels.ShouldDisableArcaneServerRedeploy(labels.RedeployCheck{
 				CurrentErr:         currentContainerErr,
 				Labels:             summary.Labels,
 				ContainerID:        summary.ID,
 				CurrentContainerID: currentContainerID,
 			}),
-			AutoUpdateEnabled: !labels.IsUpdateDisabled(dc.Labels) && !docker.ContainerNameExcluded(dc.Names, excluded),
-			Hidden:            hidden,
-			ResourceSample:    summary.ResourceSample,
+			Hidden:         hidden,
+			ResourceSample: summary.ResourceSample,
 		})
 	}
 	return items
@@ -2396,23 +2335,6 @@ func (s *ContainerService) buildContainerPaginationConfig() pagination.Config[ty
 			},
 		},
 		FilterAccessors: []pagination.FilterAccessor[types.ContainerSummary]{
-			{
-				Key: "updates",
-				Fn: func(c types.ContainerSummary, filterValue string) bool {
-					switch filterValue {
-					case "has_update":
-						return kit.FromPtr(c.UpdateInfo).HasUpdate
-					case "up_to_date":
-						return c.UpdateInfo != nil && !c.UpdateInfo.HasUpdate && c.UpdateInfo.Error == ""
-					case "error":
-						return kit.FromPtr(c.UpdateInfo).Error != ""
-					case "unknown":
-						return c.UpdateInfo == nil
-					default:
-						return true
-					}
-				},
-			},
 			{
 				Key: "status",
 				Fn: func(c types.ContainerSummary, filterValue string) bool {

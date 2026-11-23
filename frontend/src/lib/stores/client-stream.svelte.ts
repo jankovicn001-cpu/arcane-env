@@ -14,7 +14,6 @@ type StreamEnvelope = {
 	environment?: unknown;
 	eventLog?: unknown;
 	version?: unknown;
-	upgrade?: unknown;
 };
 
 type ChannelSubscriber = {
@@ -24,7 +23,7 @@ type ChannelSubscriber = {
 };
 
 const CONTAINER_DOMAINS = ['containers', 'container', 'ports', 'projects', 'project'];
-const IMAGE_DOMAINS = ['images', 'image', 'image-update', 'vulnerabilities'];
+const IMAGE_DOMAINS = ['images', 'image', 'vulnerabilities'];
 const VOLUME_DOMAINS = ['volumes', 'volume', 'volume-sizes', 'volume-backup-names', 'volume-backups'];
 const NETWORK_DOMAINS = ['networks', 'network'];
 const MANAGER_GLOBAL_DOMAINS = new Set(['users', 'roles', 'federated-credentials', 'api-keys']);
@@ -47,23 +46,12 @@ export const KIND_QUERY_DOMAINS: Record<string, readonly string[]> = {
 	event: [],
 	activity: ['backup-activities', 'volume-backups', 'environment-jobs', 'job-runs', 'job-run'],
 	build: ['images', 'image', 'build-workspace', 'system'],
-	vulnerability: ['vulnerabilities', 'images', 'image'],
-	image_update: [
-		'containers',
-		'container',
-		'projects',
-		'project',
-		'images',
-		'image',
-		'image-update',
-		'vulnerabilities',
-		'environment-versions'
-	]
+	vulnerability: ['vulnerabilities', 'images', 'image']
 };
 
 const ALL_DOMAINS = [...new Set([...Object.values(KIND_QUERY_DOMAINS).flat(), ...MANAGER_GLOBAL_DOMAINS])];
 const EVENTS_DOMAIN = 'events';
-const SILENT_KINDS = new Set(['activity', 'build', 'vulnerability', 'image_update', 'swarm']);
+const SILENT_KINDS = new Set(['activity', 'build', 'vulnerability', 'swarm']);
 const ALL_KIND = 'all';
 const MIN_GAP_MS = 2_000;
 const BATCH_MS = 250;
@@ -188,7 +176,7 @@ function createClientStream() {
 			}
 		},
 		onEvent: (envelope) => {
-			const payload = envelope.activity ?? envelope.environment ?? envelope.eventLog ?? envelope.version ?? envelope.upgrade;
+			const payload = envelope.activity ?? envelope.environment ?? envelope.eventLog ?? envelope.version;
 			if (!envelope.channel || payload === undefined) {
 				return;
 			}

@@ -25,7 +25,6 @@ import (
 	"kit.getarcane.app/docker"
 	"kit.getarcane.app/docker/compat"
 	"kit.getarcane.app/sys/cgroup"
-	"kit.getarcane.app/updater"
 	"kit.getarcane.app/updater/labels"
 
 	"getarcane.dev/arcane/v3/internal/activity"
@@ -36,20 +35,13 @@ import (
 	"getarcane.dev/arcane/v3/internal/database"
 	dockerInternal "getarcane.dev/arcane/v3/internal/docker"
 	"getarcane.dev/arcane/v3/internal/environment"
-	"getarcane.dev/arcane/v3/internal/event"
-	"getarcane.dev/arcane/v3/internal/imageupdate"
 	"getarcane.dev/arcane/v3/internal/network"
-	"getarcane.dev/arcane/v3/internal/project"
-	"getarcane.dev/arcane/v3/internal/registry"
-	"getarcane.dev/arcane/v3/internal/role"
 	"getarcane.dev/arcane/v3/internal/s3"
 	"getarcane.dev/arcane/v3/internal/scheduler/flow"
 	"getarcane.dev/arcane/v3/internal/scheduler/runs"
 	"getarcane.dev/arcane/v3/internal/settings"
 	systembackup "getarcane.dev/arcane/v3/internal/system/children/backup"
 	"getarcane.dev/arcane/v3/internal/system/children/prune"
-	"getarcane.dev/arcane/v3/internal/system/children/upgrade"
-	"getarcane.dev/arcane/v3/internal/version"
 	"getarcane.dev/arcane/v3/internal/volume"
 	activitylib "getarcane.dev/arcane/v3/pkg/activity"
 	"getarcane.dev/arcane/v3/pkg/francis"
@@ -68,35 +60,29 @@ type (
 		activityService       *activity.ActivityService
 		dockerHostMemoryCache *cache.Cache[struct{}, dockerHostMemoryInfo]
 
-		prune   *prune.Service
-		upgrade *upgrade.Service
-		backup  *systembackup.Service
+		prune  *prune.Service
+		backup *systembackup.Service
 	}
 
 	SystemServiceParams struct {
 		fx.In
 
-		DB                 *database.DB
-		DockerService      *dockerInternal.DockerClientService
-		ContainerService   *container.ContainerService
-		ImageUpdateService *imageupdate.ImageUpdateService
-		VolumeService      *volume.VolumeService
-		NetworkService     *network.NetworkService
-		SettingsService    *settings.SettingsService
-		ActivityService    *activity.ActivityService
-		VersionService     *version.VersionService
-		EventService       *event.EventService
-		ProjectService     *project.ProjectService
-		RegistryService    *registry.ContainerRegistryService
-		BackupEngine       *backup.Engine
-		S3Destinations     *s3.S3DestinationService
-		RecoveryKeys       *backup.RecoveryKeyStore
-		Actors             *francis.Runtime
-		Config             *config.Config
-		SettingsEnv        settings.Env
-		Ctx                context.Context
-		Scheduler          types.DynamicScheduler
-		Admission          *runs.Admission
+		DB               *database.DB
+		DockerService    *dockerInternal.DockerClientService
+		ContainerService *container.ContainerService
+		VolumeService    *volume.VolumeService
+		NetworkService   *network.NetworkService
+		SettingsService  *settings.SettingsService
+		ActivityService  *activity.ActivityService
+		BackupEngine     *backup.Engine
+		S3Destinations   *s3.S3DestinationService
+		RecoveryKeys     *backup.RecoveryKeyStore
+		Actors           *francis.Runtime
+		Config           *config.Config
+		SettingsEnv      settings.Env
+		Ctx              context.Context
+		Scheduler        types.DynamicScheduler
+		Admission        *runs.Admission
 	}
 
 	startMatchingContainersOptions struct {
@@ -138,23 +124,11 @@ func NewSystemService(p SystemServiceParams) *SystemService {
 			TTL:      dockerHostMemoryCacheTTL,
 		},
 		prune: prune.NewService(prune.ServiceParams{
-			Location:           p.Config.GetLocation(),
-			DockerService:      p.DockerService,
-			ActivityService:    p.ActivityService,
-			ImageUpdateService: p.ImageUpdateService,
-			VolumeService:      p.VolumeService,
-			NetworkService:     p.NetworkService,
-		}),
-		upgrade: upgrade.NewService(upgrade.ServiceParams{
-			DB:                    p.DB,
-			DockerService:         p.DockerService,
-			VersionService:        p.VersionService,
-			EventService:          p.EventService,
-			SettingsService:       p.SettingsService,
-			ProjectService:        p.ProjectService,
-			RegistryService:       p.RegistryService,
-			ResolveRuntimeOptions: resolveUpgraderRuntimeOptions,
-			KeepUpgrader:          p.Config.UpgradeKeepContainer,
+			Location:        p.Config.GetLocation(),
+			DockerService:   p.DockerService,
+			ActivityService: p.ActivityService,
+			VolumeService:   p.VolumeService,
+			NetworkService:  p.NetworkService,
 		}),
 	}
 	s.backup = systembackup.NewService(systembackup.Dependencies{
@@ -171,7 +145,7 @@ func NewSystemService(p SystemServiceParams) *SystemService {
 		Config:                p.Config,
 		SettingsEnv:           p.SettingsEnv,
 		RecoveryKeys:          p.RecoveryKeys,
-		ResolveRuntimeOptions: resolveUpgraderRuntimeOptions,
+		ResolveRuntimeOptions: resolveHelperRuntimeOptions,
 		Ctx:                   p.Ctx,
 		Scheduler:             p.Scheduler,
 		Admission:             p.Admission,
@@ -179,8 +153,8 @@ func NewSystemService(p SystemServiceParams) *SystemService {
 	return s
 }
 
-func (s *SystemService) RegisterWorkflows(engine *flow.Engine, environments *environment.EnvironmentService, roles *role.RoleService) error {
-	return errors.Join(s.backup.RegisterWorkflows(engine, environments), s.upgrade.RegisterWorkflows(engine, environments, roles))
+func (s *SystemService) RegisterWorkflows(engine *flow.Engine, environments *environment.EnvironmentService) error {
+	return s.backup.RegisterWorkflows(engine, environments)
 }
 
 func (s *SystemService) ReconcileInterruptedBackups(ctx context.Context, protectedIDs ...string) error {
@@ -208,22 +182,6 @@ func (s *SystemService) PruneScheduled(ctx context.Context, environmentID string
 
 func (s *SystemService) ReconcileScheduledPrune(ctx context.Context, previous types.SchedulerRun) (types.SchedulerOutcome, error) {
 	return s.prune.ReconcileScheduledPrune(ctx, previous)
-}
-
-func (s *SystemService) TriggerUpgradeViaCLI(ctx context.Context, user types.Actor, target updater.SelfUpdateTarget) (string, error) {
-	return s.upgrade.TriggerUpgradeViaCLI(ctx, user, target)
-}
-
-func (s *SystemService) ResumeUpgradeJobOnStartup(ctx context.Context) {
-	s.upgrade.ResumeUpgradeJobOnStartup(ctx)
-}
-
-func (s *SystemService) RunUpgradeStreamProducer(ctx context.Context, events chan<- types.UpgradeJob) {
-	s.upgrade.RunStreamProducer(ctx, events)
-}
-
-func (s *SystemService) PruneUpgradeLogs(ctx context.Context, dataDir string, now time.Time) (int, error) {
-	return s.upgrade.PruneUpgradeLogs(ctx, dataDir, now)
 }
 
 func (s *SystemService) StartAllContainers(ctx context.Context, environmentID string) (*types.ContainerActionResult, error) {
@@ -463,7 +421,7 @@ func (s *SystemService) loadDockerHostMemory(ctx context.Context) (dockerHostMem
 	return dockerHostMemoryInfo{root: root, total: uint64(info.Info.MemTotal)}, nil
 }
 
-func resolveUpgraderRuntimeOptions(
+func resolveHelperRuntimeOptions(
 	ctx context.Context,
 	dockerHost string,
 	currentContainer *mobycontainer.InspectResponse,
@@ -476,7 +434,7 @@ func resolveUpgraderRuntimeOptions(
 		return nil, nil, "", fmt.Errorf("resolve docker host %q: %w", dockerHost, err)
 	}
 
-	// The upgrader must reach the tcp DOCKER_HOST, so prefer a network the
+	// The helper must reach the tcp DOCKER_HOST, so prefer a network the
 	// daemon proxy is actually on over the plain auto heuristic (#3533).
 	if scheme != "unix" && selectReachableNetwork != nil {
 		return vuln.BuildDockerHostEnv(dockerHost), nil, mobycontainer.NetworkMode(selectReachableNetwork(ctx, currentContainer, dockerHost)), nil

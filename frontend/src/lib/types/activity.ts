@@ -4,7 +4,6 @@ export type ActivityType =
 	| 'job_run'
 	| 'image_pull'
 	| 'image_build'
-	| 'image_update_check'
 	| 'image_patch'
 	| 'project_pull'
 	| 'project_build'
@@ -24,7 +23,6 @@ export type ActivityType =
 	| 'container_pause'
 	| 'container_unpause'
 	| 'vulnerability_scan'
-	| 'auto_update'
 	| 'system_prune'
 	| 'resource_action';
 

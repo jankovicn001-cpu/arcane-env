@@ -4,9 +4,7 @@ export type JobScheduleConfig = {
 	environmentHealthInterval: string;
 	eventCleanupInterval: string;
 	expiredSessionsCleanupInterval: string;
-	autoUpdateInterval: string;
 	dockerClientRefreshInterval: string;
-	pollingInterval: string;
 	scheduledPruneInterval: string;
 	vulnerabilityScanInterval: string;
 	imageAutoPatchInterval: string;

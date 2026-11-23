@@ -81,12 +81,11 @@ func RegisterJobSchedules(api huma.API, jobSvc *JobService, proxyRemoteJSON hand
 		Method:        http.MethodPost,
 		Path:          "/agents/{id}/jobs/{jobId}",
 		Summary:       "Run a job action",
-		Description:   "Trigger a background job to run immediately or restart a continuous job worker",
+		Description:   "Trigger a background job to run immediately",
 		Tags:          []string{"JobSchedules"},
 		Security:      handlerutil.DefaultOperationSecurity(),
 	}, "action", map[string]string{
-		"run":     authz.PermJobsRun,
-		"restart": authz.PermJobsRestart,
+		"run": authz.PermJobsRun,
 	}, h.RunJobAction)
 
 	basePath := "/agents/{id}/jobs/{jobId}"

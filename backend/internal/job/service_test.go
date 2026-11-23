@@ -24,8 +24,6 @@ import (
 	"getarcane.dev/arcane/v3/internal/role"
 	"getarcane.dev/arcane/v3/internal/scheduler/runs"
 	"getarcane.dev/arcane/v3/internal/settings"
-	userdomain "getarcane.dev/arcane/v3/internal/user"
-	"getarcane.dev/arcane/v3/pkg/authz"
 	francistest "getarcane.dev/arcane/v3/pkg/francis/testing"
 	"getarcane.dev/arcane/v3/pkg/httpx"
 	"getarcane.dev/types/v3"
@@ -33,13 +31,11 @@ import (
 
 type (
 	fakeJobScheduler struct {
+		rescheduleErr      error
 		jobs               map[string]types.SchedulerJob
 		runtimeStates      map[string]types.JobRuntimeState
 		rescheduled        []string
 		rescheduleContexts []context.Context
-		rescheduleErr      error
-		busWatcherRuns     []string
-		busWatcherContexts []context.Context
 	}
 
 	fakeJob struct {
@@ -149,8 +145,8 @@ func TestJobService_ListJobs_UsesRuntimeScheduleAndNextRun(t *testing.T) {
 	require.NoError(t, err)
 
 	nextRun := time.Date(2026, time.July, 10, 8, 0, 0, 0, time.UTC)
-	fakeScheduler := newFakeJobScheduler("auto-update")
-	fakeScheduler.runtimeStates["auto-update"] = types.JobRuntimeState{
+	fakeScheduler := newFakeJobScheduler("scheduled-prune")
+	fakeScheduler.runtimeStates["scheduled-prune"] = types.JobRuntimeState{
 		Schedule:  "0 8 * * *",
 		NextRun:   &nextRun,
 		Scheduled: true,
@@ -160,9 +156,9 @@ func TestJobService_ListJobs_UsesRuntimeScheduleAndNextRun(t *testing.T) {
 	jobs, err := jobSvc.ListJobs(ctx)
 	require.NoError(t, err)
 
-	autoUpdateJob := findJobStatusByID(t, jobs.Jobs, "auto-update")
-	require.Equal(t, "0 8 * * *", autoUpdateJob.Schedule)
-	require.Equal(t, nextRun, *autoUpdateJob.NextRun)
+	pruneJob := findJobStatusByID(t, jobs.Jobs, "scheduled-prune")
+	require.Equal(t, "0 8 * * *", pruneJob.Schedule)
+	require.Equal(t, nextRun, *pruneJob.NextRun)
 
 	now := time.Now().UTC()
 	failed := types.SchedulerRun{
@@ -295,31 +291,9 @@ func TestJobService_ListJobs_UsesRuntimeScheduleAndNextRun(t *testing.T) {
 	outcome, runErr = classifyOutcome("environment-health:0", types.SchedulerOutcome{}, context.DeadlineExceeded)
 	require.ErrorIs(t, runErr, context.DeadlineExceeded)
 	require.Equal(t, types.RunStatusRetrying, outcome.Status)
-	outcome, runErr = classifyOutcome("auto-update", types.SchedulerOutcome{Status: types.RunStatusPartial}, cloneErr)
+	outcome, runErr = classifyOutcome("auto-patch", types.SchedulerOutcome{Status: types.RunStatusPartial}, cloneErr)
 	require.ErrorIs(t, runErr, cloneErr)
 	require.Equal(t, types.RunStatusPartial, outcome.Status)
-}
-
-func TestJobService_ListJobs_ImageUpdateWatcherIsContinuousAndRespectsEnabled(t *testing.T) {
-	ctx := t.Context()
-	db := setupSettingsTestDB(t)
-
-	settingsSvc, err := newSettingsServiceForTest(t, ctx, db)
-	require.NoError(t, err)
-	require.NoError(t, settingsSvc.SetBoolSetting(ctx, "pollingEnabled", false))
-
-	jobSvc := newJobServiceForTest(t, ctx, db, settingsSvc, &config.Config{}, newFakeJobScheduler())
-	jobs, err := jobSvc.ListJobs(ctx)
-	require.NoError(t, err)
-
-	watcher := findJobStatusByID(t, jobs.Jobs, "image-polling")
-	require.Equal(t, "Image Update Watcher", watcher.Name)
-	require.Equal(t, "0 * * * *", watcher.Schedule)
-	require.Equal(t, "pollingInterval", watcher.SettingsKey)
-	require.NotNil(t, watcher.NextRun)
-	require.True(t, watcher.IsContinuous)
-	require.True(t, watcher.CanRunManually)
-	require.False(t, watcher.Enabled)
 }
 
 func TestJobService_UpdateJobSchedules_ReschedulesChangedJob(t *testing.T) {
@@ -329,33 +303,15 @@ func TestJobService_UpdateJobSchedules_ReschedulesChangedJob(t *testing.T) {
 	settingsSvc, err := newSettingsServiceForTest(t, ctx, db)
 	require.NoError(t, err)
 
-	fakeScheduler := newFakeJobScheduler("auto-update")
+	fakeScheduler := newFakeJobScheduler("scheduled-prune")
 	jobSvc := newJobServiceForTest(t, ctx, db, settingsSvc, &config.Config{}, fakeScheduler)
 
 	_, err = jobSvc.UpdateJobSchedules(ctx, types.JobScheduleConfig{
-		AutoUpdateInterval: "*/10 * * * *",
-	}, map[string]bool{"autoUpdateInterval": true})
+		ScheduledPruneInterval: "*/10 * * * *",
+	}, map[string]bool{"scheduledPruneInterval": true})
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"auto-update"}, fakeScheduler.rescheduled)
-}
-
-func TestJobService_UpdateJobSchedules_DeprecatedPollingIntervalDoesNotReschedule(t *testing.T) {
-	ctx := t.Context()
-	db := setupSettingsTestDB(t)
-
-	settingsSvc, err := newSettingsServiceForTest(t, ctx, db)
-	require.NoError(t, err)
-
-	fakeScheduler := newFakeJobScheduler("auto-update")
-	jobSvc := newJobServiceForTest(t, ctx, db, settingsSvc, &config.Config{}, fakeScheduler)
-
-	updated, err := jobSvc.UpdateJobSchedules(ctx, types.JobScheduleConfig{
-		PollingInterval: "*/10 * * * *",
-	}, map[string]bool{"pollingInterval": true})
-	require.NoError(t, err)
-	require.Equal(t, "*/10 * * * *", updated.PollingInterval)
-	require.Empty(t, fakeScheduler.rescheduled)
+	require.Equal(t, []string{"scheduled-prune"}, fakeScheduler.rescheduled)
 }
 
 func TestJobService_UpdateJobSchedules_UsesLifecycleContextForReschedule(t *testing.T) {
@@ -369,12 +325,12 @@ func TestJobService_UpdateJobSchedules_UsesLifecycleContextForReschedule(t *test
 	lifecycleCtx := context.WithValue(t.Context(), lifecycleContextKey{}, true)
 	requestCtx, cancelRequest := context.WithCancel(t.Context())
 
-	fakeScheduler := newFakeJobScheduler("auto-update")
+	fakeScheduler := newFakeJobScheduler("scheduled-prune")
 	jobSvc := newJobServiceForTest(t, lifecycleCtx, db, settingsSvc, &config.Config{}, fakeScheduler)
 
 	_, err = jobSvc.UpdateJobSchedules(requestCtx, types.JobScheduleConfig{
-		AutoUpdateInterval: "*/10 * * * *",
-	}, map[string]bool{"autoUpdateInterval": true})
+		ScheduledPruneInterval: "*/10 * * * *",
+	}, map[string]bool{"scheduledPruneInterval": true})
 	require.NoError(t, err)
 
 	cancelRequest()
@@ -396,10 +352,10 @@ func TestJobService_UpdateJobSchedules_RejectsInvalidCronWithoutChangingSetting(
 	jobSvc := newJobServiceForTest(t, ctx, db, settingsSvc, &config.Config{}, fakeScheduler)
 
 	_, err = jobSvc.UpdateJobSchedules(ctx, types.JobScheduleConfig{
-		PollingInterval: "not a cron expression",
-	}, map[string]bool{"pollingInterval": true})
-	require.ErrorContains(t, err, "invalid cron expression for pollingInterval")
-	require.Equal(t, "0 * * * *", settingsSvc.GetStringSetting(ctx, "pollingInterval"))
+		ScheduledPruneInterval: "not a cron expression",
+	}, map[string]bool{"scheduledPruneInterval": true})
+	require.ErrorContains(t, err, "invalid cron expression for scheduledPruneInterval")
+	require.Equal(t, "0 0 * * *", settingsSvc.GetStringSetting(ctx, "scheduledPruneInterval"))
 	require.Empty(t, fakeScheduler.rescheduled)
 }
 
@@ -412,20 +368,20 @@ func TestJobService_UpdateJobSchedules_RestoresPreviousScheduleWhenRescheduleFai
 	require.NoError(t, settingsSvc.LoadDatabaseSettings(ctx))
 
 	fakeScheduler := &fakeJobScheduler{
-		jobs:          map[string]types.SchedulerJob{"auto-update": fakeJob{name: "auto-update"}},
+		jobs:          map[string]types.SchedulerJob{"scheduled-prune": fakeJob{name: "scheduled-prune"}},
 		runtimeStates: map[string]types.JobRuntimeState{},
 		rescheduleErr: errors.New("scheduler unavailable"),
 	}
 	jobSvc := newJobServiceForTest(t, ctx, db, settingsSvc, &config.Config{}, fakeScheduler)
 
 	_, err = jobSvc.UpdateJobSchedules(ctx, types.JobScheduleConfig{
-		AutoUpdateInterval: "0 8 * * *",
-	}, map[string]bool{"autoUpdateInterval": true})
+		ScheduledPruneInterval: "0 8 * * *",
+	}, map[string]bool{"scheduledPruneInterval": true})
 	require.ErrorContains(t, err, "scheduler unavailable")
-	require.Equal(t, "0 0 * * *", settingsSvc.GetStringSetting(ctx, "autoUpdateInterval"))
+	require.Equal(t, "0 0 * * *", settingsSvc.GetStringSetting(ctx, "scheduledPruneInterval"))
 
 	var persisted settings.SettingVariable
-	require.NoError(t, db.WithContext(ctx).First(&persisted, "key = ?", "autoUpdateInterval").Error)
+	require.NoError(t, db.WithContext(ctx).First(&persisted, "key = ?", "scheduledPruneInterval").Error)
 	require.Equal(t, "0 0 * * *", persisted.Value)
 }
 
@@ -468,35 +424,6 @@ func TestJobService_UpdateJobSchedules_DelegatesEnvironmentHealthReschedule(t *t
 	require.NoError(t, err)
 	require.Equal(t, 1, rescheduled)
 	require.Empty(t, fakeScheduler.rescheduled)
-}
-
-func TestJobService_Submit_PersistsImageUpdateWatcherRun(t *testing.T) {
-	ctx := t.Context()
-	db := setupSettingsTestDB(t)
-	settingsSvc, err := newSettingsServiceForTest(t, ctx, db)
-	require.NoError(t, err)
-	fakeScheduler := newFakeJobScheduler()
-	jobSvc := newJobServiceForTest(t, ctx, db, settingsSvc, &config.Config{}, fakeScheduler)
-	require.NoError(t, db.AutoMigrate(&userdomain.User{}, &role.Role{}, &role.UserRoleAssignment{}))
-	require.NoError(t, db.Create(&userdomain.User{Username: "operator", BaseModel: database.BaseModel{ID: "operator"}}).Error)
-	require.NoError(t, db.Create(&role.Role{
-		ID:          "jobs-manager",
-		Name:        "Jobs manager",
-		Permissions: database.StringSlice{authz.PermJobsRun},
-	}).Error)
-	require.NoError(t, db.Create(&role.UserRoleAssignment{UserID: "operator", RoleID: "jobs-manager"}).Error)
-	run, err := jobSvc.Submit(ctx, types.SchedulerRequest{
-		JobID:         "image-polling",
-		EnvironmentID: "0",
-		Trigger:       "manual",
-		RequestedBy:   "operator",
-	})
-	require.NoError(t, err)
-	require.Equal(t, types.RunStatusQueued, run.Status)
-	persisted, err := jobSvc.runs.Get(ctx, "0", "image-polling", run.ID)
-	require.NoError(t, err)
-	require.Equal(t, run.ID, persisted.ID)
-	require.Empty(t, fakeScheduler.busWatcherRuns)
 }
 
 func findJobStatusByID(t *testing.T, jobs []types.JobStatus, id string) types.JobStatus {
@@ -547,12 +474,6 @@ func (s *fakeJobScheduler) AddJob(ctx context.Context, job types.SchedulerJob) e
 	return nil
 }
 
-func (s *fakeJobScheduler) RunBusWatcherNow(ctx context.Context, watcherID string) error {
-	s.busWatcherRuns = append(s.busWatcherRuns, watcherID)
-	s.busWatcherContexts = append(s.busWatcherContexts, ctx)
-	return nil
-}
-
 func (j fakeJob) Name() string {
 	return j.name
 }
@@ -595,7 +516,7 @@ func TestJobActivityLifecycle(t *testing.T) {
 	svc, activities, db := newJobActivityTestService(t)
 	ctx := t.Context()
 	run, err := svc.runs.Submit(ctx, types.SchedulerRequest{
-		JobID:   "auto-update",
+		JobID:   "auto-patch",
 		RunID:   "b6d679c2-bdf5-4af1-985f-49c468983ba0",
 		Trigger: "scheduled",
 	})
@@ -719,7 +640,7 @@ func TestJobActivityVisibilityAndGrouping(t *testing.T) {
 		visible                   bool
 	}{
 		{
-			job:         "auto-update",
+			job:         "auto-patch",
 			trigger:     "scheduled",
 			environment: "0",
 			visible:     true,
@@ -743,25 +664,25 @@ func TestJobActivityVisibilityAndGrouping(t *testing.T) {
 			visible:     true,
 		},
 		{
-			job:         "image-polling",
+			job:         "event-cleanup",
 			trigger:     "manual",
 			environment: "0",
 			visible:     true,
 		},
 		{
-			job:         "auto-update",
+			job:         "auto-patch",
 			trigger:     "manual",
 			environment: "remote",
 			visible:     true,
 		},
 		{
-			job:         "auto-update",
+			job:         "auto-patch",
 			trigger:     "remote",
 			environment: "0",
 			visible:     false,
 		},
 		{
-			job:         "image-polling",
+			job:         "event-cleanup",
 			trigger:     "scheduled",
 			environment: "0",
 			visible:     false,
@@ -804,7 +725,7 @@ func TestJobActivityRestartRepairsFailedProjection(t *testing.T) {
 	svc, activities, db := newJobActivityTestService(t)
 	ctx := t.Context()
 	require.NoError(t, db.Migrator().DropTable(&activity.ActivityMessage{}, &activity.Activity{}))
-	run, err := svc.runs.Submit(ctx, types.SchedulerRequest{JobID: "auto-update", Trigger: "scheduled"})
+	run, err := svc.runs.Submit(ctx, types.SchedulerRequest{JobID: "auto-patch", Trigger: "scheduled"})
 	require.NoError(t, err, "activity failure must not reject accepted work")
 	require.NotEmpty(t, run.ActivityID)
 	require.NoError(t, svc.runs.UpdateRun(ctx, run, func(current *types.SchedulerRun) error {

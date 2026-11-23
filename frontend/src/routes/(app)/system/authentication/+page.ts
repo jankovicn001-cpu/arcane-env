@@ -1,10 +1,14 @@
+import { environmentGroupListQuery } from '#lib/query/environment-groups.js';
 import { environmentListQuery } from '#lib/query/environments.js';
 import { federatedCredentialListQuery } from '#lib/query/federated-credentials.js';
 import { oidcMappingListQuery } from '#lib/query/oidc-mappings.js';
 import { roleAllQuery } from '#lib/query/roles.js';
 import settingsStore from '#lib/stores/config-store.svelte.js';
+import type { EnvironmentGroup } from '#lib/types/environment.js';
+import { GLOBAL_SCOPE } from '#lib/types/role.js';
 import type { SearchPaginationSortRequest } from '#lib/types/ui/pagination.js';
 import { throwPageLoadError } from '#lib/utils/api.js';
+import { hasPermission } from '#lib/utils/auth.js';
 import { resolveInitialTableRequest } from '#lib/utils/tables.js';
 
 import type { PageLoad } from './$types';
@@ -23,7 +27,13 @@ export const load: PageLoad = async ({ parent }) => {
 		}
 	} satisfies SearchPaginationSortRequest);
 
-	const [mappings, federatedCredentials, roles, environmentsPage] = await Promise.all([
+	// Role mappings can be scoped to an environment; only users who may list agents can load them.
+	let groups: Promise<EnvironmentGroup[]> = Promise.resolve([]);
+	if (hasPermission('environments:list', GLOBAL_SCOPE)) {
+		groups = queryClient.query(environmentGroupListQuery());
+	}
+
+	const [mappings, federatedCredentials, roles, environmentsPage, environmentGroups] = await Promise.all([
 		queryClient.query(oidcMappingListQuery()),
 		queryClient.query(federatedCredentialListQuery(federatedCredentialRequestOptions)),
 		queryClient.query(roleAllQuery()),
@@ -33,6 +43,7 @@ export const load: PageLoad = async ({ parent }) => {
 				sort: { column: 'name', direction: 'asc' }
 			})
 		),
+		groups,
 		settingsStore.reload().catch((err: unknown) => throwPageLoadError(err, 'Failed to load settings'))
 	]);
 
@@ -42,6 +53,7 @@ export const load: PageLoad = async ({ parent }) => {
 		federatedCredentials,
 		federatedCredentialRequestOptions,
 		roles,
-		environments: environmentsPage.data
+		environments: environmentsPage.data,
+		environmentGroups
 	};
 };

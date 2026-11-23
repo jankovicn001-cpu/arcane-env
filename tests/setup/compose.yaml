@@ -24,7 +24,7 @@ services:
     user: '0:0'
     command:
       - '-listenip=0.0.0.0'
-      - '-allowfrom=arcane,arcane-upgrader'
+      - '-allowfrom=arcane'
       - '-allowhealthcheck'
       - '-allowGET=(/v[\d.]+)?/_ping'
       - '-allowGET=(/v[\d.]+)?/version'

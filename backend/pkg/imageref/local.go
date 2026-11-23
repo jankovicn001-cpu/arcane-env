@@ -1,3 +1,4 @@
+// Package imageref contains shared image-reference parsing operations.
 package imageref
 
 import (
@@ -6,13 +7,18 @@ import (
 	"github.com/moby/moby/api/types/image"
 )
 
-// imageNameAnnotation is set on the descriptor of an image imported from an
-// image archive or exported by BuildKit (docker load, --load, Copacetic). The
-// containerd image store never sets it on a pulled image.
-const imageNameAnnotation = "io.containerd.image.name"
+const (
+	// imageNameAnnotation is set on the descriptor of an image imported from an
+	// image archive or exported by BuildKit (docker load, --load, Copacetic). The
+	// containerd image store never sets it on a pulled image.
+	imageNameAnnotation = "io.containerd.image.name"
+
+	// LocalBuildRegistry is Arcane's reserved registry host for locally built image tags.
+	LocalBuildRegistry = "arcane.local"
+)
 
 // IsLocalImage reports whether an image exists only on this daemon, so no
-// registry holds it to check for updates or to patch from.
+// registry holds it to patch from.
 //
 // The containerd image store gives every image a repo digest, so repo digests
 // alone cannot tell a pull from a build. Docker 29+ records where an image came

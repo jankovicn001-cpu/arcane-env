@@ -53,8 +53,6 @@
 				return m.container();
 			case 'project':
 				return m.project();
-			case 'updater':
-				return m.updater();
 			case 'gitops':
 				return m.gitops();
 			default:
@@ -64,8 +62,6 @@
 
 	function actionTypeLabel(type: string): string {
 		switch (type) {
-			case 'update':
-				return m.common_update();
 			case 'start':
 				return m.common_start();
 			case 'stop':
@@ -78,8 +74,6 @@
 				return m.common_up();
 			case 'down':
 				return m.common_down();
-			case 'run':
-				return m.webhook_action_type_run();
 			case 'sync':
 				return m.resource_sync_cap();
 			default:

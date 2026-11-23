@@ -221,7 +221,7 @@ func TestEventService_CreateEvent_NormalizesActor(t *testing.T) {
 
 	t.Run("falls back to system when actor is missing", func(t *testing.T) {
 		evt, err := svc.CreateEvent(ctx, CreateEventRequest{
-			Type:     EventTypeSystemAutoUpdate,
+			Type:     EventTypeSystemPrune,
 			Severity: EventSeverityInfo,
 			Title:    "System task",
 		})
@@ -899,10 +899,10 @@ func TestRecordDockerEventPublishesSuppressedChange(t *testing.T) {
 
 func TestPublishChangeNormalizesKinds(t *testing.T) {
 	svc := NewEventService(nil, &config.Config{}, nil)
-	for _, kind := range []string{"images", "podman.pod.start", " Container.Start ", "git.sync.run", "image_update", ""} {
+	for _, kind := range []string{"images", "podman.pod.start", " Container.Start ", "git.sync.run", "volume", ""} {
 		svc.PublishChange("", kind)
 	}
-	require.ElementsMatch(t, []string{"image", "podman", "container", "gitops", "image_update"}, slices.Collect(maps.Keys(svc.EnvironmentChanges("0").Kinds)))
+	require.ElementsMatch(t, []string{"image", "podman", "container", "gitops", "volume"}, slices.Collect(maps.Keys(svc.EnvironmentChanges("0").Kinds)))
 }
 
 func TestEventStreamProducerFlushesOnceForAccessibleEnvironments(t *testing.T) {

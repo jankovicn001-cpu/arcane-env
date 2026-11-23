@@ -126,16 +126,6 @@ function groupStatusIsActive(group: ActivityGroup): boolean {
 	return group.kind === 'batch' ? isActiveStatus(group.status) : isActiveStatus(group.activity.status);
 }
 
-function activeUpdateKeys(activities: readonly Activity[]): Set<string> {
-	return new Set(
-		activities
-			.filter(
-				(activity) => activity.type === 'auto_update' && activity.resourceType === 'container' && isActiveStatus(activity.status)
-			)
-			.map((activity) => `${activity.sourceEnvironmentId || activity.environmentId}:${activity.resourceId}`)
-	);
-}
-
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
 	return Object.fromEntries(Object.entries(record).filter(([entryKey]) => entryKey !== key));
 }
@@ -179,20 +169,11 @@ function sourceEnvironmentId(activity: Activity | null | undefined): string {
 function createActivityStore() {
 	let state = $state.raw<ActivityStoreState>(initialState());
 	let _activities = $state.raw<Activity[]>([]);
-	let _activeUpdateKeys = $state.raw<ReadonlySet<string>>(new Set());
 	let session = new AbortController();
 	let requestedEnvironments: Record<string, string> = {};
 	const observedStatusById = new Map<string, ActivityStatus>();
 	const completionToastQueuedIds = new Set<string>();
 	const activitySubscribers = new Set<(activities: readonly Activity[]) => void>();
-
-	function setActivities(activities: Activity[]) {
-		_activities = activities;
-		const keys = activeUpdateKeys(activities);
-		if (keys.size !== _activeUpdateKeys.size || [...keys].some((key) => !_activeUpdateKeys.has(key))) {
-			_activeUpdateKeys = keys;
-		}
-	}
 
 	function notifyActivitySubscribers() {
 		for (const subscriber of activitySubscribers) subscriber(_activities);
@@ -401,7 +382,7 @@ function createActivityStore() {
 
 	function rebuildActivities() {
 		const activities = sortActivities(Object.values(state.environmentActivities).flat());
-		setActivities(activities);
+		_activities = activities;
 
 		const present = new Set(activities.map((activity) => activity.id));
 		state = {
@@ -457,7 +438,7 @@ function createActivityStore() {
 			globalIndex = _activities.findIndex((item) => item.id === normalized.id);
 		}
 		if (globalIndex >= 0) {
-			setActivities([..._activities.slice(0, globalIndex), normalized, ..._activities.slice(globalIndex + 1)]);
+			_activities = [..._activities.slice(0, globalIndex), normalized, ..._activities.slice(globalIndex + 1)];
 			notifyActivitySubscribers();
 		} else {
 			rebuildActivities();
@@ -629,17 +610,6 @@ function createActivityStore() {
 	const activeCount = $derived(_activities.filter((activity) => isActiveStatus(activity.status)).length);
 
 	return {
-		acceptActivity: (activity: Activity) => {
-			const current = _activities.find((item) => item.id === activity.id);
-			if (current) {
-				if (!isActiveStatus(current.status) && isActiveStatus(activity.status)) {
-					observedStatusById.set(activity.id, activity.status);
-					noteActivityStatus(current);
-				}
-				return;
-			}
-			mergeActivity(activity);
-		},
 		subscribeActivities(subscriber: (activities: readonly Activity[]) => void): () => void {
 			activitySubscribers.add(subscriber);
 			subscriber(_activities);
@@ -649,9 +619,6 @@ function createActivityStore() {
 		},
 		get activities(): Activity[] {
 			return _activities;
-		},
-		get activeUpdateKeys(): ReadonlySet<string> {
-			return _activeUpdateKeys;
 		},
 		get runningGroups(): ActivityGroup[] {
 			return runningGroups;
@@ -735,7 +702,7 @@ function createActivityStore() {
 				observedStatusById.clear();
 				completionToastQueuedIds.clear();
 				discardPendingActivityToasts();
-				setActivities([]);
+				_activities = [];
 				state = initialState();
 			}
 			return wasStarted;

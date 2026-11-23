@@ -26,8 +26,6 @@
 	const canWriteSettings = $derived(hasPermission('settings:update', GLOBAL_SCOPE));
 	const mobilePushEnabled = $derived(settingsStore.current?.apnsEnabled === true);
 	let savingMobilePush = $state(false);
-	const releaseLinksEnabled = $derived(settingsStore.current?.notificationsIncludeReleaseLinks !== false);
-	let savingReleaseLinks = $state(false);
 	const queryClient = useQueryClient();
 	const mobileDevicesQuery = createQuery(() => ({
 		...apnsStatusQuery(),
@@ -45,18 +43,6 @@
 			setLoadingState: (value) => (savingMobilePush = value),
 			onSuccess: () => {
 				if (!enabled) queryClient.removeQueries({ queryKey: apnsStatusQuery().queryKey });
-				toast.success(m.common_update_success({ resource: m.settings() }));
-			}
-		});
-	}
-
-	async function handleReleaseLinksToggle(enabled: boolean) {
-		savingReleaseLinks = true;
-		await handleApiResultWithCallbacks({
-			result: await tryCatch(settingsStore.save({ notificationsIncludeReleaseLinks: enabled })),
-			message: m.common_update_failed({ resource: m.settings() }),
-			setLoadingState: (value) => (savingReleaseLinks = value),
-			onSuccess: () => {
 				toast.success(m.common_update_success({ resource: m.settings() }));
 			}
 		});
@@ -107,23 +93,6 @@
 							checked={mobilePushEnabled}
 							disabled={isReadOnly || !canWriteSettings || savingMobilePush}
 							onCheckedChange={(checked) => void handleMobilePushToggle(checked)}
-							aria-describedby={describedBy}
-						/>
-					{/snippet}
-				</SettingsRow>
-				<SettingsRow
-					for="notificationsIncludeReleaseLinks"
-					label={m.notifications_release_links_label()}
-					description={m.notifications_release_links_description()}
-					layout="switch"
-					lock={settingsStore.lock('notificationsIncludeReleaseLinks')}
-				>
-					{#snippet children({ describedBy })}
-						<Switch
-							id="notificationsIncludeReleaseLinks"
-							checked={releaseLinksEnabled}
-							disabled={isReadOnly || !canWriteSettings || savingReleaseLinks}
-							onCheckedChange={(checked) => void handleReleaseLinksToggle(checked)}
 							aria-describedby={describedBy}
 						/>
 					{/snippet}

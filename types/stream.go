@@ -13,8 +13,6 @@ type (
 		EventLog    *EventStreamEvent       `json:"eventLog,omitempty"`
 		Version     *VersionStreamEvent     `json:"version,omitempty"`
 
-		Upgrade *UpgradeJob `json:"upgrade,omitempty"`
-
 		Channel string `json:"channel,omitempty"`
 
 		Type string `json:"type,omitempty"`
@@ -26,5 +24,4 @@ const (
 	StreamChannelActivities   = "activities"
 	StreamChannelEvents       = "events"
 	StreamChannelVersion      = "version"
-	StreamChannelUpgrade      = "arcane-upgrade"
 )

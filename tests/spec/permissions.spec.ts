@@ -112,9 +112,9 @@ async function selectUserAssignment(
 	environmentName: string,
 	roleName: string
 ) {
-	const environmentSelect = dialog.getByRole('combobox', { name: 'Agent', exact: true }).nth(index);
-	await environmentSelect.click();
-	await page.getByRole('option', { name: environmentName, exact: true }).click();
+	const scopeSelect = dialog.getByRole('combobox', { name: 'Scope', exact: true }).nth(index);
+	await scopeSelect.click();
+	await page.getByRole('option', { name: `Agent: ${environmentName}`, exact: true }).click();
 
 	const roleSelect = dialog.getByRole('combobox', { name: 'Role', exact: true }).nth(index);
 	await roleSelect.click();
@@ -327,7 +327,7 @@ async function loginAs(
 	await expect(page).toHaveURL(expectedPath, { timeout: 15_000 });
 }
 
-type TestContainer = { id: string; names: string[]; labels?: Record<string, string> };
+type TestContainer = { id: string; names: string[] };
 
 /** Records forbidden API responses so pages can prove they issue no unauthorized optional requests. */
 function collectForbiddenResponses(page: Page) {
@@ -355,33 +355,6 @@ async function createEnvironmentAdminViaApi(page: Page, username: string, passwo
 		`Assign the Admin role on the local environment to ${username}`
 	);
 	return user;
-}
-
-async function toggleAutoUpdateThroughUI(
-	page: Page,
-	containerId: string,
-	expectEnabledAfter: boolean
-) {
-	const card = page
-		.locator('div')
-		.filter({ hasText: /^Auto-Update/ })
-		.filter({ has: page.getByRole('switch') })
-		.last();
-	const responsePromise = page.waitForResponse(
-		(response) =>
-			response.request().method() === 'PUT' &&
-			new URL(response.url()).pathname === `/api/agents/0/containers/${containerId}/autoupdate`
-	);
-	await card.getByRole('switch').click();
-	await readApiData<{ message: string }>(await responsePromise, 'Toggle container auto-update');
-	await expect(
-		card.getByText(expectEnabledAfter ? 'Enabled' : 'Disabled', { exact: true })
-	).toBeVisible();
-	const details = await readApiData<{ autoUpdateEnabled?: boolean }>(
-		await page.request.get(`/api/agents/0/containers/${containerId}`),
-		'Read container details'
-	);
-	expect(details.autoUpdateEnabled).toBe(expectEnabledAfter);
 }
 
 async function deleteUserThroughUI(page: Page, user: TestUser) {
@@ -653,13 +626,11 @@ test(
 				environmentAdminUsername,
 				password
 			);
-			const [targetContainer] = (
-				await readApiData<TestContainer[]>(
-					await page.request.get('/api/agents/0/containers?start=0&limit=50'),
-					'List local containers'
-				)
-			).filter((container) => !container.labels?.['com.getarcaneapp.arcane.updater']);
-			expect(targetContainer, 'a container without an updater label is required').toBeTruthy();
+			const [targetContainer] = await readApiData<TestContainer[]>(
+				await page.request.get('/api/agents/0/containers?start=0&limit=50'),
+				'List local containers'
+			);
+			expect(targetContainer, 'a local container is required').toBeTruthy();
 			await readApiData<unknown>(
 				await page.request.post('/api/agents/0/volumes', {
 					data: { name: environmentAdminVolumeName, driver: 'local' }
@@ -690,7 +661,7 @@ test(
 				);
 				expect(environmentAdmin.permissionsByEnv['0']).toEqual(
 					expect.arrayContaining([
-						'containers:autoupdate',
+						'containers:list',
 						'images:list',
 						'projects:create',
 						'volumes:backup'
@@ -720,22 +691,6 @@ test(
 				await expect(
 					environmentAdminPage.getByRole('tab', { name: 'Overview', exact: true })
 				).toBeVisible();
-				await expect(environmentAdminPage.getByText('Auto-Update', { exact: true })).toBeVisible();
-				const initialDetails = await readApiData<{ autoUpdateEnabled?: boolean }>(
-					await environmentAdminPage.request.get(`/api/agents/0/containers/${targetContainer.id}`),
-					'Read initial container details'
-				);
-				expect(typeof initialDetails.autoUpdateEnabled).toBe('boolean');
-				await toggleAutoUpdateThroughUI(
-					environmentAdminPage,
-					targetContainer.id,
-					!initialDetails.autoUpdateEnabled
-				);
-				await toggleAutoUpdateThroughUI(
-					environmentAdminPage,
-					targetContainer.id,
-					initialDetails.autoUpdateEnabled === true
-				);
 
 				await environmentAdminPage.goto('/images');
 				await expect(
@@ -748,11 +703,6 @@ test(
 				const imageListBody = await imageListResponse.json();
 				expect(Array.isArray(imageListBody.data)).toBe(true);
 				expect(typeof imageListBody.maxImageUploadSize).toBe('number');
-
-				await environmentAdminPage.goto('/updates');
-				await expect(
-					environmentAdminPage.getByRole('heading', { name: 'Updates', exact: true })
-				).toBeVisible();
 
 				const optionalRequests: string[] = [];
 				const recordOptionalRequest = (request: Request) => {
@@ -860,3 +810,84 @@ test(
 		}
 	}
 );
+
+test('the role scope picker offers environments and assigns a role on one', async ({ page }) => {
+	const timestamp = '2026-01-01T00:00:00Z';
+	const group = {
+		id: 'e2e-scope-group',
+		name: 'E2E Scope Environment',
+		description: '',
+		environmentCount: 0,
+		createdAt: timestamp,
+		updatedAt: timestamp
+	};
+	const viewer = {
+		id: 'role_viewer',
+		name: 'Viewer',
+		description: 'Read-only access to all resources',
+		permissions: [],
+		builtIn: true,
+		assignedUserCount: 0,
+		createdAt: timestamp
+	};
+	const created = { id: 'e2e-scope-user', username: 'e2e-scope-user' };
+	const assignmentBodies: unknown[] = [];
+	await page.route(/\/api\/environment-groups(?:\?.*)?$/, (route) =>
+		route.fulfill({ json: { success: true, data: [group] } })
+	);
+	await page.route(/\/api\/roles(?:\?.*)?$/, (route) =>
+		route.fulfill({
+			json: {
+				success: true,
+				data: [viewer],
+				pagination: { totalPages: 1, totalItems: 1, currentPage: 1, itemsPerPage: 1000 }
+			}
+		})
+	);
+	await page.route(
+		(url) => url.pathname === '/api/users',
+		async (route) => {
+			if (route.request().method() !== 'POST') {
+				await route.fallback();
+				return;
+			}
+			await route.fulfill({
+				status: 201,
+				json: { success: true, data: { ...created, roleAssignments: [], permissionsByEnv: {} } }
+			});
+		}
+	);
+	await page.route(
+		(url) => url.pathname === `/api/users/${created.id}/roles`,
+		async (route) => {
+			assignmentBodies.push(route.request().postDataJSON());
+			await route.fulfill({ json: { success: true, data: [] } });
+		}
+	);
+
+	await page.goto('/system/users');
+	await page.getByRole('button', { name: 'Create User', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Create New User' });
+	await expect(dialog).toBeVisible();
+	await dialog.getByLabel('Username', { exact: true }).fill(created.username);
+	await dialog.getByLabel('Password *', { exact: true }).fill('E2e-RBAC-user-123!');
+	await dialog.getByRole('button', { name: 'Add assignment', exact: true }).click();
+
+	const scopeSelect = dialog.getByRole('combobox', { name: 'Scope', exact: true });
+	await scopeSelect.click();
+	const options = page.getByRole('option');
+	const environmentOption = page.getByRole('option', {
+		name: `Environment: ${group.name}`,
+		exact: true
+	});
+	await expect(options.first()).toHaveText('Global (org-wide)');
+	await expect(environmentOption).toBeVisible();
+	await expect(options.filter({ hasText: /^Agent: / }).first()).toBeVisible();
+	await environmentOption.click();
+	await expect(scopeSelect).toHaveText(`Environment: ${group.name}`);
+
+	await dialog.getByRole('button', { name: 'Create User', exact: true }).click();
+	await expect
+		.poll(() => assignmentBodies)
+		.toEqual([{ assignments: [{ roleId: viewer.id, environmentGroupId: group.id }] }]);
+});

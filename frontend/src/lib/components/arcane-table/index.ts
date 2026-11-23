@@ -13,4 +13,4 @@ export type {
 	ArcaneFilterFn
 } from './table-features';
 export { default as UniversalMobileCard } from './cards/universal-mobile-card.svelte';
-export { usageFilters, imageUpdateFilters, severityFilters, vulnerabilitySeverityFilters } from './data.js';
+export { usageFilters, severityFilters, vulnerabilitySeverityFilters } from './data.js';

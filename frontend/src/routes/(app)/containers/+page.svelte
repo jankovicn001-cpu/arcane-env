@@ -1,37 +1,32 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { createQuery } from '@tanstack/svelte-query';
 	import { untrack } from 'svelte';
 
 	import { ContainersIcon } from '#lib/icons/index.js';
 	import { ResourcePageLayout, type ActionButton, type StatCardConfig } from '#lib/layouts/index.js';
 	import { m } from '#lib/paraglide/messages.js';
 	import { containerListQuery } from '#lib/query/containers.js';
-	import { queryKeys } from '#lib/query/query-keys.js';
 	import type { ContainerStatusCounts } from '#lib/types/container.js';
 	import { pinViewAction } from '#lib/utils/dashboard-layout.js';
 	import { ENVIRONMENT_FILTER, environmentFilterIds, hasShownPermission, readableEnvironments } from '#lib/utils/environments.js';
 	import { ResourceListPageState } from '#lib/utils/resource-list-page.svelte.js';
-	import { confirmAndApplyAllUpdates } from '#lib/utils/update-actions.js';
 
 	import ContainerEnvironmentSync from './components/container-environment-sync.svelte';
 	import ContainerTable from './components/container-table.svelte';
 
 	let { data } = $props();
-	const queryClient = useQueryClient();
 
 	const pageState = new ResourceListPageState(untrack(() => data.containerRequestOptions));
 	let groupByProject = $state(false);
 	let hasSeenEnvironmentSync = $state(false);
-	let isApplyingUpdates = $state(false);
 
 	const countsFallback: ContainerStatusCounts = {
 		runningContainers: 0,
 		stoppedContainers: 0,
 		totalContainers: 0,
-		unhealthyContainers: 0,
-		updatesAvailable: 0
+		unhealthyContainers: 0
 	};
 
 	const containersQuery = createQuery(() => {
@@ -72,7 +67,6 @@
 	const containerStatusCounts = $derived(resourcesReady ? (containers.counts ?? countsFallback) : countsFallback);
 
 	const canCreateContainers = $derived(hasShownPermission('containers:create'));
-	const canApplyUpdates = $derived(hasShownPermission('image-updates:apply'));
 
 	const actionButtons: ActionButton[] = $derived.by(() => {
 		const buttons: ActionButton[] = [];
@@ -84,20 +78,6 @@
 				label: m.common_create_button({ resource: m.container() }),
 				onclick: () => goto(resolve('/(app)/containers/new')),
 				disabled: !resourcesReady
-			});
-		}
-		if (canApplyUpdates) {
-			buttons.push({
-				id: 'check-updates',
-				action: 'update',
-				label: m.containers_check_updates(),
-				onclick: () =>
-					confirmAndApplyAllUpdates({
-						setLoading: (loading) => (isApplyingUpdates = loading),
-						onRefresh: () => queryClient.invalidateQueries({ queryKey: queryKeys.containers.listPrefix(pageState.scope) })
-					}),
-				loading: isApplyingUpdates,
-				disabled: !resourcesReady || isApplyingUpdates
 			});
 		}
 		buttons.push(pinViewAction('containers', pageState.requestOptions, readableEnvironments('containers:list')), {

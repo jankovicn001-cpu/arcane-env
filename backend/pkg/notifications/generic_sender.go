@@ -154,7 +154,7 @@ func ValidateGenericPayloadTemplate(config GenericConfig) error {
 		return nil
 	}
 
-	sampleVars := EventVars("Local Docker", "0", NotificationEventImageUpdate)
+	sampleVars := EventVars("Local Docker", "0", NotificationEventVulnerabilityFound)
 	rendered, err := RenderGenericPayloadTemplate(config, "Sample Title", "sample \"message\"\nwith a newline", sampleVars)
 	if err != nil {
 		return err

@@ -16,7 +16,6 @@
 	import { m } from '#lib/paraglide/messages.js';
 	import BaseAPIService from '#lib/services/api-service.js';
 	import { environmentStatusStore } from '#lib/stores/environment-status.store.svelte.js';
-	import { upgradeJobStore } from '#lib/stores/upgrade-job.store.svelte.js';
 	import userStore, { userHasPermissionInAnyEnvironment } from '#lib/stores/user-store.svelte.js';
 	import { versionStore } from '#lib/stores/version.store.svelte.js';
 	import { getEffectiveNavigationSettings, setMobileNavigation } from '#lib/utils/navigation.js';
@@ -72,10 +71,6 @@
 	$effect(() => {
 		if (!versionStore.buildChanged) return;
 		untrack(() => {
-			if (upgradeJobStore.reloadsOnBuildChange) {
-				void BaseAPIService.reloadForNewBuild();
-				return;
-			}
 			toast.info(m.upgrade_build_changed_title(), {
 				id: 'arcane-build-changed',
 				description: m.upgrade_build_changed_description(),

@@ -1,17 +1,15 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { mode } from 'mode-watcher';
 	import { watch } from 'runed';
-	import { onMount, tick } from 'svelte';
+	import { tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { parse as parseYaml } from 'yaml';
 
 	import type { ActionButton } from '#lib/components/action-button-group/types.js';
 	import ActionButtons from '#lib/components/action-buttons.svelte';
-	import ImageReleaseNotesDialog from '#lib/components/dialogs/image-release-notes-dialog.svelte';
 	import EnvironmentDestinationSelect from '#lib/components/form/environment-destination-select.svelte';
 	import IconImage from '#lib/components/icon-image.svelte';
 	import ResourceNotFound from '#lib/components/resource-not-found.svelte';
@@ -39,23 +37,18 @@
 	import { projectListForEnvironmentQuery } from '#lib/query/projects.js';
 	import { queryKeys } from '#lib/query/query-keys.js';
 	import { APIError } from '#lib/services/api-service.js';
-	import { containerService } from '#lib/services/container-service.js';
 	import { projectWorkspaceService } from '#lib/services/project-workspace-service.js';
-	import { activityStore } from '#lib/stores/activity.store.svelte.js';
 	import settingsStore from '#lib/stores/config-store.svelte.js';
 	import type { ContainerDetails, ContainerNetworkSettings, ContainerStats as ContainerStatsType } from '#lib/types/container.js';
 	import type { ProjectIncludeFile } from '#lib/types/project.js';
 	import type { DashboardWidgetConfig } from '#lib/types/user.js';
 	import { extractApiErrorMessage } from '#lib/utils/api.js';
 	import { hasPermission } from '#lib/utils/auth.js';
-	import { runContainerLifecycleAction, confirmAndUpdateContainer } from '#lib/utils/container-actions.js';
-	import { isAutoUpdateLabelDisabled } from '#lib/utils/container-auto-update.js';
-	import { createContainerUpdateActivityTracker } from '#lib/utils/container-update-activities.js';
+	import { runContainerLifecycleAction } from '#lib/utils/container-actions.js';
 	import { createDashboardWidget, pinDashboardAction } from '#lib/utils/dashboard-layout.js';
 	import { calculateMemoryUsage, getCustomHostname, getThemedIconUrl } from '#lib/utils/docker.js';
-	import { environmentHref, listScopes } from '#lib/utils/environments.js';
+	import { environmentHref } from '#lib/utils/environments.js';
 	import { bytes } from '#lib/utils/formatting.js';
-	import { blockedUpdateTitle } from '#lib/utils/image-updates.js';
 	import { quadletUnitHref } from '#lib/utils/podman.js';
 	import { tryCatch } from '#lib/utils/try-catch.js';
 
@@ -88,12 +81,6 @@
 	let autoScrollLogs = $state(true);
 	let hasInitialStatsLoaded = $state(false);
 	let statsError = $state(false);
-
-	// Auto-update: the Docker label controls the state when set (not toggleable via UI).
-	// The status itself comes from the container response; older agents omit it.
-	const autoUpdateLabelControlled = $derived(isAutoUpdateLabelDisabled(container?.labels));
-	const autoUpdateStatusAvailable = $derived(typeof container?.autoUpdateEnabled === 'boolean');
-	const autoUpdateEnabled = $derived(container?.autoUpdateEnabled === true);
 
 	async function refreshContainerDetails() {
 		const [, result] = await Promise.all([
@@ -167,7 +154,6 @@
 	const canViewLogs = $derived(hasPermission('containers:logs', currentEnvId));
 	const canExecShell = $derived(hasPermission('containers:exec', currentEnvId));
 	const canPauseContainer = $derived(hasPermission('containers:pause', currentEnvId));
-	const canUpdateContainer = $derived(hasPermission('image-updates:apply', currentEnvId));
 	const canEditContainer = $derived(
 		hasPermission('containers:update', currentEnvId) && !container?.composeInfo && !container?.redeployDisabled
 	);
@@ -184,82 +170,8 @@
 
 	let killDialogOpen = $state(false);
 	let commitDialogOpen = $state(false);
-	let releaseNotesOpen = $state(false);
 	let lifecycleStatus = $state<'pausing' | 'unpausing' | ''>('');
 	const isLifecycleActionPending = $derived(lifecycleStatus !== '');
-
-	// The details response carries the stored check for this container's current
-	// policy; an older agent that omits it reports no status rather than "up to date".
-	const updateInfo = $derived(hasPermission('image-updates:read', currentEnvId) ? (container?.updateInfo ?? null) : null);
-	const blockedTitle = $derived(blockedUpdateTitle(updateInfo));
-	const canReadReleaseNotes = $derived(
-		hasPermission('image-updates:read', currentEnvId) && !!container?.image && !container.image.startsWith('sha256:')
-	);
-	let updateLoading = $state(false);
-	let updateViewMounted = false;
-	const updateActivities = createContainerUpdateActivityTracker(
-		() => [currentEnvId],
-		() => {
-			void refreshAfterUpdate();
-		},
-		() => data.container.id
-	);
-
-	onMount(() => {
-		updateViewMounted = true;
-		const unsubscribe = activityStore.subscribeActivities(updateActivities.observe);
-		return () => {
-			updateViewMounted = false;
-			unsubscribe();
-		};
-	});
-
-	async function refreshAfterUpdate() {
-		const environmentId = currentEnvId;
-		const containerId = data.container.id;
-		const result = await tryCatch(containerService.getContainerForEnvironment(environmentId, containerId));
-		if (!updateViewMounted || environmentId !== currentEnvId || containerId !== data.container.id) return;
-		if (result.error instanceof APIError && result.error.status === 404) {
-			await Promise.all(
-				listScopes([environmentId]).map((scope) =>
-					queryClient.invalidateQueries({ queryKey: queryKeys.containers.listPrefix(scope) })
-				)
-			);
-			if (!updateViewMounted || environmentId !== currentEnvId || containerId !== data.container.id) return;
-			await goto(resolve('/(app)/containers'));
-			return;
-		}
-		if (result.error !== null) {
-			toast.error(m.common_refresh_failed({ resource: m.containers() }), {
-				description: extractApiErrorMessage(result.error)
-			});
-			return;
-		}
-		await Promise.all([
-			...listScopes([environmentId]).flatMap((scope) => [
-				queryClient.invalidateQueries({ queryKey: queryKeys.containers.listPrefix(scope) }),
-				queryClient.invalidateQueries({ queryKey: queryKeys.projects.listPrefix(scope) })
-			]),
-			queryClient.invalidateQueries({ queryKey: queryKeys.containers.detail(environmentId, containerId) }),
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.environment(environmentId) })
-		]);
-	}
-
-	function handleUpdateContainer() {
-		if (!container) return;
-		confirmAndUpdateContainer({
-			containerId: container.id,
-			containerName: containerDisplayName,
-			environmentId: currentEnvId,
-			setLoading: (loading) => {
-				updateLoading = loading;
-			},
-			onRefresh: refreshAfterUpdate,
-			onAccepted: (activity) => {
-				if (updateViewMounted) updateActivities.accept(activity);
-			}
-		});
-	}
 
 	async function handlePauseContainer() {
 		if (!container || isLifecycleActionPending) return;
@@ -458,16 +370,6 @@
 				href: `/projects/new?fromContainers=${container.id}&fromEnv=${encodeURIComponent(currentEnvId)}`
 			});
 		}
-		if (canUpdateContainer && updateInfo?.hasUpdate) {
-			list.push({
-				id: 'update',
-				action: 'update',
-				label: m.update_container(),
-				group: 'manage',
-				loading: updateLoading,
-				onclick: handleUpdateContainer
-			});
-		}
 		if (canPauseContainer && (isContainerPaused || isContainerRunning)) {
 			list.push({
 				id: 'pause',
@@ -477,16 +379,6 @@
 				loading: lifecycleStatus !== '',
 				disabled: isLifecycleActionPending,
 				onclick: isContainerPaused ? handleUnpauseContainer : handlePauseContainer
-			});
-		}
-		if (canReadReleaseNotes) {
-			list.push({
-				id: 'release-notes',
-				action: 'base',
-				label: m.image_update_release_notes_button(),
-				icon: FileTextIcon,
-				group: 'manage',
-				onclick: () => (releaseNotesOpen = true)
 			});
 		}
 		if (canCommitImage) {
@@ -550,13 +442,8 @@
 				>{getContainerStatusLabel(container.state.status)}</Badge
 			>
 		{/if}
-		{#if blockedTitle}
-			<Badge variant="amber" minWidth="20" title={blockedTitle}>{m.blocked()}</Badge>
-		{:else if updateInfo?.hasUpdate}
-			<Badge variant="amber" minWidth="20">{m.sidebar_update_available()}</Badge>
-		{/if}
 		{#if quadletHref}
-			<Badge variant="purple" size="sm" href={quadletHref} title={m.podman_quadlet_update_disabled()}>
+			<Badge variant="purple" size="sm" href={quadletHref}>
 				{m.podman_managed_by_quadlet()}
 			</Badge>
 		{/if}
@@ -598,12 +485,7 @@
 	<Tabs.Content value="overview" class="h-full">
 		<ContainerOverview
 			{container}
-			environmentId={currentEnvId}
 			{primaryIpAddress}
-			{autoUpdateEnabled}
-			{autoUpdateLabelControlled}
-			{autoUpdateStatusAvailable}
-			onAutoUpdateChange={refreshContainerDetails}
 			onViewPortMappings={showNetworkTab ? navigateToNetworkPortMappings : undefined}
 			onViewStorage={hasMounts ? () => onTabChange('storage') : undefined}
 			onViewNetworks={showNetworkTab ? () => onTabChange('network') : undefined}
@@ -742,9 +624,6 @@
 				return refreshContainerDetails();
 			}}
 		/>
-	{/if}
-	{#if releaseNotesOpen && canReadReleaseNotes}
-		<ImageReleaseNotesDialog bind:open={releaseNotesOpen} environmentId={currentEnvId} imageRef={container.image} />
 	{/if}
 	{#if commitDialogOpen && canCommitImage}
 		<ContainerCommitDialog

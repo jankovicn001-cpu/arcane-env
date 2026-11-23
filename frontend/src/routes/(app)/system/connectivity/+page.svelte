@@ -16,11 +16,6 @@
 			.int(m.all_environments_limit_help())
 			.min(2, m.all_environments_limit_help())
 			.max(256, m.all_environments_limit_help()),
-		upgradeMaxParallelAgents: z.coerce
-			.number()
-			.int(m.upgrade_max_parallel_agents_help())
-			.min(1, m.upgrade_max_parallel_agents_help())
-			.max(16, m.upgrade_max_parallel_agents_help()),
 		frontendCacheMinutes: z.coerce
 			.number()
 			.int(m.cached_data_lifetime_help())
@@ -31,7 +26,6 @@
 	function readFormValues() {
 		return {
 			allEnvironmentsLimit: Number(settingsStore.current?.allEnvironmentsLimit) || 64,
-			upgradeMaxParallelAgents: Number(settingsStore.current?.upgradeMaxParallelAgents) || 4,
 			frontendCacheMinutes: Number(settingsStore.current?.frontendCacheMinutes) || 10
 		};
 	}
@@ -70,29 +64,6 @@
 							bind:value={formInputs.allEnvironmentsLimit.value}
 							disabled={settingsStore.isLocked('allEnvironmentsLimit')}
 							aria-invalid={!!formInputs.allEnvironmentsLimit.error}
-							aria-describedby={describedBy}
-							aria-errormessage={errorId}
-						/>
-					{/snippet}
-				</SettingsRow>
-				<SettingsRow
-					for="upgradeMaxParallelAgents"
-					label={m.upgrade_max_parallel_agents()}
-					description={m.upgrade_max_parallel_agents_description()}
-					helpText={m.upgrade_max_parallel_agents_help()}
-					error={formInputs.upgradeMaxParallelAgents.error}
-					lock={settingsStore.lock('upgradeMaxParallelAgents')}
-				>
-					{#snippet children({ describedBy, errorId })}
-						<Input
-							id="upgradeMaxParallelAgents"
-							type="number"
-							min="1"
-							max="16"
-							placeholder="4"
-							bind:value={formInputs.upgradeMaxParallelAgents.value}
-							disabled={settingsStore.isLocked('upgradeMaxParallelAgents')}
-							aria-invalid={!!formInputs.upgradeMaxParallelAgents.error}
 							aria-describedby={describedBy}
 							aria-errormessage={errorId}
 						/>

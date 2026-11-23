@@ -23,7 +23,6 @@ import (
 	"getarcane.dev/cli/v3/internal/cmdutil"
 	"getarcane.dev/cli/v3/internal/output"
 	clitypes "getarcane.dev/cli/v3/internal/types"
-	"getarcane.dev/cli/v3/pkg/images/updates"
 	"getarcane.dev/types/v3"
 )
 
@@ -73,31 +72,24 @@ func Command() *cobra.Command {
 		Aliases:     []string{"image", "i"},
 		Short:       "Manage images",
 	}
-	updateCommand := updates.Command()
-	for _, child := range updateCommand.Commands() {
-		if child.Name() == "check-image" {
-			cmdutil.SetResource(ImageRef, child)
-		}
-	}
 	command.AddCommand(
 		newListCmd(), newGetCmd(), newRemoveCmd(), newPullCmd(), newPruneCmd(),
 		newCountsCmd(), newUploadCmd(), newSearchCmd(), newHistoryCmd(), newTagCmd(),
-		newExportCmd(), newAttestationsCmd(), newBuildCmd(), newBuildsCmd(), updateCommand,
+		newExportCmd(), newAttestationsCmd(), newBuildCmd(), newBuildsCmd(),
 	)
 	return command
 }
 
 func newListCmd() *cobra.Command {
 	var opts struct {
-		sort          string
-		order         string
-		search        string
-		updatesFilter string
-		limit         int
-		start         int
-		inUseOnly     bool
-		unusedOnly    bool
-		all           bool
+		sort       string
+		order      string
+		search     string
+		limit      int
+		start      int
+		inUseOnly  bool
+		unusedOnly bool
+		all        bool
 	}
 	command := &cobra.Command{
 		Annotations:  map[string]string{"arcane:scope": cmdutil.ScopeMerged},
@@ -128,9 +120,6 @@ func newListCmd() *cobra.Command {
 			if opts.unusedOnly {
 				query.Set("inUse", "false")
 			}
-			if opts.updatesFilter != "" {
-				query.Set("updates", opts.updatesFilter)
-			}
 
 			return cmdutil.RunList(cmd, c, cmdutil.ListSpec[types.ImageSummary]{
 				Resource: "images",
@@ -157,7 +146,6 @@ func newListCmd() *cobra.Command {
 	command.Flags().IntVarP(&opts.limit, "limit", "n", 0, "Number of images to show (server default 20)")
 	command.Flags().IntVar(&opts.start, "start", 0, cmdutil.StartFlagUsage)
 	command.Flags().BoolVarP(&opts.all, "all", "a", false, cmdutil.AllFlagUsage)
-	cmdutil.EnumVarP(command, command.Flags(), &opts.updatesFilter, "updates", "", "", "Filter by update status", "has_update", "up_to_date", "error", "unknown")
 	command.Flags().StringVar(&opts.sort, "sort", "", "Field to sort by")
 	cmdutil.EnumVarP(command, command.Flags(), &opts.order, "order", "", "", "Sort order", "asc", "desc")
 	command.Flags().StringVar(&opts.search, "search", "", "Search query")

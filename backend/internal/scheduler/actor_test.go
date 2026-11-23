@@ -49,17 +49,17 @@ func newTestCoordinator(t testing.TB,
 	return coordinator, runtime
 }
 
-func newJobSchedulerForTest(t testing.TB, ctx context.Context, location *time.Location) *jobScheduler {
+func newJobSchedulerForTest(t testing.TB, ctx context.Context) *jobScheduler {
 	t.Helper()
 	var scheduler *jobScheduler
-	coordinator, runtime := newTestCoordinator(t, ctx, location, func(ctx context.Context, run types.SchedulerRun) (types.SchedulerOutcome, error) {
+	coordinator, runtime := newTestCoordinator(t, ctx, nil, func(ctx context.Context, run types.SchedulerRun) (types.SchedulerOutcome, error) {
 		job, ok := scheduler.GetJob(run.JobID)
 		if !ok {
 			return types.SchedulerOutcome{Status: types.RunStatusSkipped}, nil
 		}
 		return job.Run(jobcontext.WithExecution(ctx, run, nil))
 	})
-	created, err := NewJobScheduler(ctx, coordinator, location)
+	created, err := NewJobScheduler(ctx, coordinator, nil)
 	require.NoError(t, err)
 	scheduler = created.(*jobScheduler)
 	schedulerTestRuntimes.Store(scheduler, runtime)

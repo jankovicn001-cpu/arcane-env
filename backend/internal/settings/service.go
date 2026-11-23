@@ -837,27 +837,6 @@ func (s *SettingsService) SetIntSetting(ctx context.Context, key string, value i
 	return s.UpdateSetting(ctx, key, strconv.Itoa(value))
 }
 
-func (s *SettingsService) SetContainerAutoUpdateExclusion(ctx context.Context, containerName string, excluded bool) error {
-	s.writes.Lock()
-	defer s.writes.Unlock()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	ordered := kit.Unique(kit.TrimNonEmpty(strings.Split(s.GetStringSetting(ctx, "autoUpdateExcludedContainers"), ",")))
-	if excluded {
-		ordered = kit.Unique(append(ordered, containerName))
-	} else {
-		ordered = slices.DeleteFunc(ordered, func(name string) bool { return name == containerName })
-	}
-
-	values, err := s.prepareUpdateValues([]types.SettingUpdate{{Key: "autoUpdateExcludedContainers", Value: strings.Join(ordered, ",")}})
-	if err != nil {
-		return err
-	}
-	return s.persistSettings(ctx, values)
-}
-
 func (s *SettingsService) EnsureJwtSigningKey(ctx context.Context) (*mldsa.PrivateKey, error) {
 	seed, err := s.ensureEncryptedKey(ctx, "jwtSigningKeySeed", mldsa.PrivateKeySize)
 	if err != nil {

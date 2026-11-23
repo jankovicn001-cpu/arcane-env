@@ -316,14 +316,7 @@ export function podmanEngineView(podman: PodmanInfo, status: PodmanStatus): Engi
 					{ label: m.podman_info_quadlet_apps(), value: status.quadletAppsSupported },
 					{ label: m.podman_info_systemd(), value: status.systemdAvailable }
 				],
-				rows: [
-					...present(m.common_scope(), status.systemdScope, false),
-					...present(
-						m.auto_update_title(),
-						status.autoUpdateMode === 'unavailable' ? m.common_unavailable() : status.autoUpdateMode,
-						false
-					)
-				]
+				rows: present(m.common_scope(), status.systemdScope, false)
 			},
 			{
 				title: m.docker_info_plugins_section(),

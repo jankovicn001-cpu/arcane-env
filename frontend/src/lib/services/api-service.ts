@@ -180,9 +180,6 @@ async function parseResponseBody(response: Response, responseType: APIRequestCon
 }
 
 let tokenRefreshHandler: (() => Promise<string | null>) | null = null;
-// True while a manager self-update or "Update All" runs; its version-mismatch 401s
-// are recoverable and must not bounce the user to /login.
-let upgradeInProgress = false;
 let reloadForNewBuildStarted = false;
 let unauthorizedRedirectStarted = false;
 const skipAuthPaths = [
@@ -214,7 +211,7 @@ export function isAuthPagePath(pathname: string): boolean {
 	return ['/login', '/logout', '/oidc', '/auth/oidc', '/mobile/passkey'].some((prefix) => pathname.startsWith(prefix));
 }
 
-type UnauthorizedAction = 'none' | 'redirect' | 'reload' | 'retry';
+type UnauthorizedAction = 'none' | 'redirect' | 'retry';
 
 function reloadDocumentOnce() {
 	if (reloadForNewBuildStarted) return;
@@ -246,20 +243,17 @@ export async function handleUnauthorizedResponse(
 	}
 	if (unauthorizedRedirectStarted) return 'redirect';
 
-	// During a self-update, refresh so the new backend rotates tokens, then reload the stale document once.
-	// Only transport failures are recoverable; a rejected refresh is terminal.
-	const recoverable = isVersionMismatch || upgradeInProgress;
-
 	if (!tokenRefreshHandler) return 'none';
 
-	const needsReload = isVersionMismatch && upgradeInProgress;
-	const recovery = await tryCatch<void | string | null>(needsReload ? reloadForNewBuild() : tokenRefreshHandler());
+	const recovery = await tryCatch(tokenRefreshHandler());
 	if (session.aborted) return 'none';
-	if (recovery.error === null) return needsReload ? 'reload' : 'retry';
+	if (recovery.error === null) return 'retry';
 
+	// After a backend restart onto a new build, transport failures while refreshing are
+	// recoverable; a rejected refresh is terminal.
 	const error = recovery.error;
 	const isTransientRefreshFailure = error instanceof APIError && (error.name === 'NetworkError' || error.name === 'TimeoutError');
-	if (recoverable && isTransientRefreshFailure) return 'none';
+	if (isVersionMismatch && isTransientRefreshFailure) return 'none';
 	if (!unauthorizedRedirectStarted) {
 		unauthorizedRedirectStarted = true;
 		window.location.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
@@ -425,7 +419,7 @@ class APIClient {
 			if (action === 'retry') {
 				return this.performRequest<T>(method, url, data, { ...config, _retry: true });
 			}
-			if (action === 'redirect' || action === 'reload') {
+			if (action === 'redirect') {
 				return new Promise(() => {});
 			}
 		}
@@ -477,12 +471,6 @@ abstract class BaseAPIService {
 
 	static setTokenRefreshHandler(handler: () => Promise<string | null>) {
 		tokenRefreshHandler = handler;
-	}
-
-	// Toggled by the update flows (Update All / local update center) so an in-progress
-	// self-update restart is treated as a recoverable reconnect, not a logout.
-	static setUpgradeInProgress(value: boolean) {
-		upgradeInProgress = value;
 	}
 
 	static async reloadForNewBuild() {

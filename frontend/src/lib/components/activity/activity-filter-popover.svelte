@@ -13,7 +13,6 @@
 		'job_run',
 		'image_pull',
 		'image_build',
-		'image_update_check',
 		'project_pull',
 		'project_build',
 		'project_deploy',
@@ -28,7 +27,6 @@
 		'container_redeploy',
 		'container_delete',
 		'vulnerability_scan',
-		'auto_update',
 		'system_prune',
 		'resource_action'
 	];

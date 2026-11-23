@@ -1,6 +1,5 @@
 <script lang="ts">
 	import FormInput from '#lib/components/form/form-input.svelte';
-	import SwitchWithLabel from '#lib/components/form/labeled-switch.svelte';
 	import SelectWithLabel from '#lib/components/form/select-with-label.svelte';
 	import TextInputWithLabel from '#lib/components/form/text-input-with-label.svelte';
 	import EnvironmentMultiSelect from '#lib/components/sheets/environment-multi-select.svelte';
@@ -104,15 +103,6 @@
 					{ value: 'false', label: m.common_unused() }
 				]}
 				onValueChange={(value) => setFilter('inUse', value)}
-			/>
-		{/if}
-
-		{#if definition.filters.includes('updates')}
-			<SwitchWithLabel
-				id="resource-query-updates"
-				label={m.only_updates_available()}
-				checked={inputs.filters.value['updates'] === 'has_update'}
-				onCheckedChange={(checked) => setFilter('updates', checked ? 'has_update' : '')}
 			/>
 		{/if}
 	{/if}

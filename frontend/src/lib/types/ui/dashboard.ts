@@ -7,7 +7,6 @@ export interface DashboardEnvironmentOverview {
 	environment: Environment;
 	containers: ContainerStatusCounts;
 	imageUsageCounts: ImageUsageCounts;
-	updates: number;
 	vulnerabilities: number;
 	versionInfo?: VersionInfo;
 	podCount?: number;

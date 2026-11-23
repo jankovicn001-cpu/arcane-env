@@ -83,8 +83,7 @@ type (
 		LogJson                 bool          `env:"ARCANE_LOG_JSON" default:"false"`
 		UIConfigurationDisabled bool          `env:"ARCANE_UI_CONFIGURATION_DISABLED" default:"false"`
 
-		AgentEnabled         bool `env:"ARCANE_AGENT" default:"false"`
-		UpgradeKeepContainer bool `env:"ARCANE_UPGRADE_KEEP_CONTAINER" default:"false"`
+		AgentEnabled bool `env:"ARCANE_AGENT" default:"false"`
 	}
 )
 

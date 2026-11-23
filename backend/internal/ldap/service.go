@@ -478,6 +478,9 @@ func (s *LdapService) deprovisionUsers(ctx context.Context, tx *gorm.DB, cfg *se
 			if err := s.roleService.ReplaceUserAssignmentsInDB(ctx, tx, u.ID, role.RoleAssignmentSourceLdap, nil); err != nil {
 				return nil, fmt.Errorf("failed to clear roles of LDAP user %s: %w", u.Username, err)
 			}
+			if err := s.roleService.ReplaceUserGroupMembershipsInDB(ctx, tx, u.ID, role.RoleAssignmentSourceLdap, nil); err != nil {
+				return nil, fmt.Errorf("failed to clear user groups of LDAP user %s: %w", u.Username, err)
+			}
 		} else if err := tx.Delete(&user.User{}, "id = ?", u.ID).Error; err != nil {
 			return nil, fmt.Errorf("failed to delete LDAP user %s: %w", u.Username, err)
 		}
@@ -505,7 +508,7 @@ func (s *LdapService) assignRoles(ctx context.Context, tx *gorm.DB, synced []syn
 	for _, u := range synced {
 		granted := authz.NewPermissionSet()
 		for _, a := range role.MappedAssignments(mappings, u.groups) {
-			if a.EnvironmentID == nil {
+			if a.EnvironmentID == nil && a.EnvironmentGroupID == nil {
 				granted.AddGlobal(permissions[a.RoleID]...)
 			}
 		}
@@ -526,6 +529,10 @@ func (s *LdapService) assignRoles(ctx context.Context, tx *gorm.DB, synced []syn
 		}
 		if _, settleErr := settle(ctx, tx, u.username, err); settleErr != nil {
 			return fmt.Errorf("failed to sync roles for LDAP user %s: %w", u.username, settleErr)
+		}
+		// User groups never count toward the last-admin guard, so their memberships always follow the directory.
+		if groupsErr := s.roleService.ReplaceUserGroupMembershipsInDB(ctx, tx, u.id, role.RoleAssignmentSourceLdap, u.groups); groupsErr != nil {
+			return fmt.Errorf("failed to sync user groups for LDAP user %s: %w", u.username, groupsErr)
 		}
 	}
 	return nil

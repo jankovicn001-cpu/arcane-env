@@ -15,7 +15,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"kit.getarcane.app"
 	"kit.getarcane.app/acfs"
 	"kit.getarcane.app/docker"
 
@@ -84,13 +83,11 @@ func Command() *cobra.Command {
 		Short:       "Manage containers",
 	}
 	command.AddCommand(
-		newContainerListCmd(false),
-		newContainerListCmd(true),
+		newContainerListCmd(),
 		newGetCmd(),
 		newStartCmd(),
 		newStopCmd(),
 		newRestartCmd(),
-		newUpdateCmd(),
 		newRedeployCmd(),
 		newDeleteCmd(),
 		newCountsCmd(),
@@ -100,14 +97,12 @@ func Command() *cobra.Command {
 		newUnpauseCmd(),
 		newCommitCmd(),
 		newEditCmd(),
-		newAutoUpdateCmd(),
 	)
 	return command
 }
 
-func newContainerListCmd(updatesOnly bool) *cobra.Command {
+func newContainerListCmd() *cobra.Command {
 	var opts struct {
-		updatesFilter string
 		standalone    string
 		labelFilter   string
 		limit         int
@@ -118,9 +113,9 @@ func newContainerListCmd(updatesOnly bool) *cobra.Command {
 	}
 	command := &cobra.Command{
 		Annotations:  map[string]string{"arcane:scope": cmdutil.ScopeMerged},
-		Use:          kit.Ternary(updatesOnly, "updates", "list"),
-		Aliases:      kit.Ternary(updatesOnly, []string(nil), []string{"ls"}),
-		Short:        kit.Ternary(updatesOnly, "List containers with available updates", "List containers"),
+		Use:          "list",
+		Aliases:      []string{"ls"},
+		Short:        "List containers",
 		SilenceUsage: true,
 		Args:         cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -139,16 +134,8 @@ func newContainerListCmd(updatesOnly bool) *cobra.Command {
 			if opts.include {
 				query.Set("include", "true")
 			}
-			updatesFilter := kit.Ternary(cmd.Name() == "updates", "has_update", strings.TrimSpace(opts.updatesFilter))
-			if updatesFilter != "" {
-				query.Set("updates", updatesFilter)
-			}
 			if labelFilter := strings.TrimSpace(opts.labelFilter); labelFilter != "" {
 				query.Set("label", labelFilter)
-			}
-
-			if updatesFilter != "" && !cmdutil.JSONOutputEnabled(cmd) {
-				output.Header("Container Updates")
 			}
 
 			return cmdutil.RunList(cmd, c, cmdutil.ListSpec[types.ContainerSummary]{
@@ -156,43 +143,14 @@ func newContainerListCmd(updatesOnly bool) *cobra.Command {
 				Endpoint: clitypes.Containers(c.EnvID()),
 				Params:   cmdutil.ListParams{Resource: "containers", Limit: opts.limit, FallbackDefault: 20, Start: opts.start, All: opts.all},
 				Query:    query,
-				Headers:  kit.Ternary(updatesFilter != "", []string{"ID", "NAME", "IMAGE", "STATE", "UPDATES", "LATEST"}, []string{"ID", "NAME", "IMAGE", "STATE", "STATUS"}),
+				Headers:  []string{"ID", "NAME", "IMAGE", "STATE", "STATUS"},
 				Row: func(item types.ContainerSummary) []string {
-					if updatesFilter == "" {
-						return []string{
-							item.ID[:min(len(item.ID), 12)],
-							docker.ContainerNameFromNames(item.Names),
-							item.Image,
-							item.State,
-							item.Status,
-						}
-					}
-					status, latest := "unknown", "-"
-					if item.UpdateInfo != nil {
-						switch {
-						case item.UpdateInfo.Error != "":
-							status = "error"
-						case item.UpdateInfo.Blocked:
-							status = types.UpdaterStatusBlocked
-						case item.UpdateInfo.HasUpdate:
-							status = "has_update"
-						default:
-							status = "up_to_date"
-						}
-						switch {
-						case strings.TrimSpace(item.UpdateInfo.LatestVersion) != "":
-							latest = item.UpdateInfo.LatestVersion
-						case strings.TrimSpace(item.UpdateInfo.LatestDigest) != "":
-							latest = item.UpdateInfo.LatestDigest
-						}
-					}
 					return []string{
 						item.ID[:min(len(item.ID), 12)],
 						docker.ContainerNameFromNames(item.Names),
 						item.Image,
 						item.State,
-						status,
-						latest,
+						item.Status,
 					}
 				},
 			})
@@ -201,13 +159,10 @@ func newContainerListCmd(updatesOnly bool) *cobra.Command {
 	command.Flags().IntVarP(&opts.limit, "limit", "n", 20, "Number of containers to show")
 	command.Flags().IntVar(&opts.start, "start", 0, cmdutil.StartFlagUsage)
 	command.Flags().BoolVarP(&opts.all, "all", "a", false, cmdutil.AllFlagUsage)
-	if !updatesOnly {
-		cmdutil.EnumVarP(command, command.Flags(), &opts.updatesFilter, "updates", "", "", "Filter by update status", "has_update", "up_to_date", "error", "unknown")
-		cmdutil.EnumVarP(command, command.Flags(), &opts.standalone, "standalone", "", "", "Filter standalone containers only", "true", "false")
-		command.Flags().StringVar(&opts.labelFilter, "label", "", "Filter by label (key or key=value)")
-		command.Flags().BoolVar(&opts.includeHidden, "include-hidden", false, "Include hidden containers")
-		command.Flags().BoolVar(&opts.include, "include-internal", false, "Include Arcane-internal containers")
-	}
+	cmdutil.EnumVarP(command, command.Flags(), &opts.standalone, "standalone", "", "", "Filter standalone containers only", "true", "false")
+	command.Flags().StringVar(&opts.labelFilter, "label", "", "Filter by label (key or key=value)")
+	command.Flags().BoolVar(&opts.includeHidden, "include-hidden", false, "Include hidden containers")
+	command.Flags().BoolVar(&opts.include, "include-internal", false, "Include Arcane-internal containers")
 
 	return command
 }
@@ -329,39 +284,6 @@ func newRestartCmd() *cobra.Command {
 					output.Success("Container %s restarted successfully", containerDisplayName(resolved))
 					return nil
 				},
-			})
-		},
-	}
-}
-
-func newUpdateCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:          "update <container-id|name>",
-		Short:        "Update a container",
-		Args:         cobra.ExactArgs(1),
-		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := cmdutil.ClientFromCommand(cmd)
-			if err != nil {
-				return err
-			}
-
-			resolved, _, err := ContainerRef.Resolve(cmd.Context(), c, args[0], false)
-			if err != nil {
-				return err
-			}
-
-			// This route is served by the updater handler, so it answers with an
-			// updater.Result rather than a container.ActionResult.
-			return cmdutil.Run(cmd, c, cmdutil.Spec[types.UpdaterResult]{
-				Method:         http.MethodPost,
-				Path:           clitypes.ContainerUpdate(c.EnvID(), resolved.ID),
-				FailureMessage: "failed to update container",
-				Render: func(types.UpdaterResult) error {
-					output.Success("Container %s updated successfully", containerDisplayName(resolved))
-					return nil
-				},
-				Timeout: 30 * time.Minute,
 			})
 		},
 	}

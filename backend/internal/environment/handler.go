@@ -60,12 +60,13 @@ type (
 	}
 
 	ListEnvironmentsInput struct {
-		Search string `query:"search" doc:"Search query for filtering by name or API URL"`
-		Sort   string `query:"sort" doc:"Column to sort by"`
-		Order  string `query:"order" default:"asc" doc:"Sort direction (asc or desc)"`
-		Type   string `query:"type" doc:"Filter by environment type (comma-separated: http,agent,websocket,grpc)"`
-		Start  int    `query:"start" default:"0" doc:"Start index for pagination"`
-		Limit  int    `query:"limit" default:"20" doc:"Items per page"`
+		Search  string `query:"search" doc:"Search query for filtering by name or API URL"`
+		Sort    string `query:"sort" doc:"Column to sort by"`
+		Order   string `query:"order" default:"asc" doc:"Sort direction (asc or desc)"`
+		Type    string `query:"type" doc:"Filter by environment type (comma-separated: http,agent,websocket,grpc)"`
+		GroupID string `query:"groupId" doc:"Filter by environment group ID (comma-separated; none matches unassigned agents)"`
+		Start   int    `query:"start" default:"0" doc:"Start index for pagination"`
+		Limit   int    `query:"limit" default:"20" doc:"Items per page"`
 	}
 
 	CreateEnvironmentInput struct {
@@ -183,6 +184,9 @@ func (h *EnvironmentHandler) ListEnvironments(ctx context.Context, input *ListEn
 	params := handlerutil.PaginationParams(input.Start, input.Limit, input.Sort, input.Order, input.Search)
 	if input.Type != "" {
 		params.Filters["type"] = input.Type
+	}
+	if input.GroupID != "" {
+		params.Filters["groupId"] = input.GroupID
 	}
 
 	page, err := h.environmentService.ListAccessibleEnvironments(ctx, ps, params)
@@ -382,6 +386,7 @@ func (h *EnvironmentHandler) CreateEnvironment(ctx context.Context, input *Creat
 
 	created, err := h.environmentService.CreateEnvironment(ctx, &Environment{
 		Name:    input.Body.Name,
+		GroupID: kit.Ternary(input.Body.GroupID != "", new(input.Body.GroupID), nil),
 		Status:  string(EnvironmentStatusPending),
 		Enabled: !submitted["enabled"] || input.Body.Enabled,
 	}, &user.ID, &user.Username)
@@ -448,12 +453,14 @@ func (h *EnvironmentHandler) UpdateEnvironment(ctx context.Context, input *Updat
 	}
 	remote := input.ID != LocalEnvironmentID
 	writable := map[string]bool{
-		"name":    submitted["name"],
-		"enabled": remote && submitted["enabled"],
+		"name":     submitted["name"],
+		"group_id": submitted["groupId"],
+		"enabled":  remote && submitted["enabled"],
 	}
 	updates := map[string]any{
-		"name":    input.Body.Name,
-		"enabled": input.Body.Enabled,
+		"name":     input.Body.Name,
+		"group_id": input.Body.GroupID,
+		"enabled":  input.Body.Enabled,
 	}
 	maps.DeleteFunc(updates, func(column string, _ any) bool {
 		return !writable[column]

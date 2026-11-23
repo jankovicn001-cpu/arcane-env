@@ -24,7 +24,6 @@ type (
 )
 
 const (
-	staleImageUpdateCheckAge    = 6 * time.Hour
 	abandonedActivityGrace      = 2 * time.Minute
 	abandonedActivitySweepLimit = 500
 )
@@ -43,14 +42,6 @@ func NewService(db *database.DB) *Service {
 
 func (s *Service) activities(ctx context.Context) *gorm.DB {
 	return s.db.WithContext(ctx).Table("activities")
-}
-
-func (s *Service) StaleImageUpdateChecks(ctx context.Context) ([]Candidate, error) {
-	var rows []Candidate
-	err := s.activities(ctx).
-		Where("type = ? AND status = ? AND started_at < ?", types.ActivityTypeImageUpdateCheck, types.ActivityStatusRunning, time.Now().Add(-staleImageUpdateCheckAge)).
-		Find(&rows).Error
-	return rows, err
 }
 
 func (s *Service) Abandoned(ctx context.Context, trackedIDs []string) ([]Candidate, error) {
@@ -81,15 +72,6 @@ func (s *Service) OrphanedJobRuns(ctx context.Context, protectedIDs []string) ([
 	err := s.activities(ctx).
 		Select("id").
 		Where("type = ? AND status IN ?", types.ActivityTypeJobRun, []types.ActivityStatus{types.ActivityStatusQueued, types.ActivityStatusRunning}).
-		Where("id NOT IN ?", append(protectedIDs, "")).
-		Find(&rows).Error
-	return rows, err
-}
-
-func (s *Service) StaleAutoUpdates(ctx context.Context, protectedIDs []string) ([]Candidate, error) {
-	var rows []Candidate
-	err := s.activities(ctx).
-		Where("type = ? AND status = ?", types.ActivityTypeAutoUpdate, types.ActivityStatusRunning).
 		Where("id NOT IN ?", append(protectedIDs, "")).
 		Find(&rows).Error
 	return rows, err

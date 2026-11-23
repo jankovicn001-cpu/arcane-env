@@ -70,8 +70,7 @@ const PROTECTED_PREFIXES = [
 	'/ports',
 	'/settings',
 	'/swarm',
-	'/system',
-	'/updates'
+	'/system'
 ];
 
 const UNAUTHENTICATED_ONLY_PREFIXES = ['/login', '/oidc/login', '/img', '/favicon.ico'];

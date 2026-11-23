@@ -50,6 +50,7 @@ var (
 			"settings.category.s3destinations",
 			"settings.category.systembackups",
 			"settings.category.users",
+			"settings.category.usergroups",
 			"settings.category.webhooks",
 			"settings.category.diagnostics",
 			"settings.category.branding",
@@ -62,6 +63,15 @@ var (
 		routeSurface("route.environments", "/agents", "Environments", AccessScopeModeGlobalOnly, []string{PermEnvironmentsList, PermEnvironmentsRead}, 130),
 		routeSurface("route.environments.detail", "/agents/{id}", "Environment", AccessScopeModeGlobalOnly, []string{PermEnvironmentsList, PermEnvironmentsRead}, 0),
 		routeSurface("route.gitops", "/gitops", "GitOps Syncs", AccessScopeModeEnvPlusGlobal, []string{PermGitOpsList, PermGitOpsRead}, 0),
+		routeSurface("route.environments.browse", "/environments", "Environments", AccessScopeModeEnvPlusGlobal, []string{
+			PermContainersList, PermProjectsList, PermImagesList, PermVolumesList, PermNetworksList,
+		}, 0),
+		routeSurface("route.environments.group", "/environments/{groupId}", "Environment", AccessScopeModeEnvPlusGlobal, []string{
+			PermContainersList, PermProjectsList, PermImagesList, PermVolumesList, PermNetworksList,
+		}, 0),
+		routeSurface("route.environments.containers", "/environments/{groupId}/{environmentId}", "Agent", AccessScopeModeEnvPlusGlobal, []string{
+			PermContainersList, PermProjectsList, PermImagesList, PermVolumesList, PermNetworksList,
+		}, 0),
 		routeSurface("route.containers", "/containers", "Containers", AccessScopeModeEnvPlusGlobal, []string{PermContainersList, PermContainersRead}, 20),
 		routeSurface("route.containers.new", "/containers/new", "Create container", AccessScopeModeEnvPlusGlobal, []string{PermContainersCreate}, 0),
 		routeSurface("route.containers.detail", "/containers/{containerId}", "Container", AccessScopeModeEnvPlusGlobal, []string{PermContainersList, PermContainersRead}, 0),
@@ -72,7 +82,6 @@ var (
 		// The security page moved from /images/vulnerabilities; the surface ID stays
 		// stable so saved role access scopes keep working.
 		routeSurface("route.images.vulnerabilities", "/security", "Security", AccessScopeModeEnvPlusGlobal, []string{PermVulnsList}, 55),
-		routeSurface("route.updates", "/updates", "Image Updates", AccessScopeModeEnvPlusGlobal, []string{PermImageUpdatesList, PermImageUpdatesRead}, 0),
 		routeSurface("route.networks", "/networks", "Networks", AccessScopeModeEnvPlusGlobal, []string{PermNetworksList, PermNetworksRead}, 70),
 		routeSurface("route.networks.detail", "/networks/{networkId}", "Network", AccessScopeModeEnvPlusGlobal, []string{PermNetworksList, PermNetworksRead}, 0),
 		routeSurface("route.ports", "/networks/ports", "Ports", AccessScopeModeEnvPlusGlobal, []string{PermContainersList}, 0),
@@ -97,7 +106,6 @@ var (
 		allOfRouteSurface("route.podman.quadlets.new", "/podman/quadlets/new", "Install quadlet", AccessScopeModeEnvPlusGlobal, []string{PermPodmanRead, PermPodmanQuadletsCreate}),
 		allOfRouteSurface("route.podman.kube", "/podman/kube", "Kube", AccessScopeModeEnvPlusGlobal, []string{PermPodmanRead, PermPodmanKubeCreate}),
 		routeSurface("route.podman.secrets", "/podman/secrets", "Podman secrets", AccessScopeModeEnvPlusGlobal, []string{PermPodmanSecretsList, PermPodmanSecretsRead}, 0),
-		allOfRouteSurface("route.podman.autoupdate", "/podman/autoupdate", "Podman auto-update", AccessScopeModeEnvPlusGlobal, []string{PermPodmanRead, PermPodmanAutoUpdate}),
 		routeSurface("route.events", "/events", "Events", AccessScopeModeGlobalOnly, []string{PermEventsList}, 110),
 		routeSurface("route.activities", "", "Activities", AccessScopeModeAnyEffectiveScope, []string{PermActivitiesList, PermActivitiesRead}, 0),
 		allOfRouteSurface("route.oidc-role-mappings", "", "OIDC Role Mappings", AccessScopeModeGlobalOnly, AllPermissions()),
@@ -119,6 +127,8 @@ var (
 		allOfRouteSurface("route.settings.roles.new", "/system/roles/new", "Create role", AccessScopeModeGlobalOnly, AllPermissions()),
 		allOfRouteSurface("route.settings.roles.detail", "/system/roles/{id}", "Role", AccessScopeModeGlobalOnly, AllPermissions()),
 		settingsCategorySurface("users", "/system/users", "Users", AccessScopeModeGlobalOnly, []string{PermUsersList, PermUsersRead}),
+		settingsCategorySurface("usergroups", "/system/user-groups", "User Groups", AccessScopeModeGlobalOnly, []string{PermUsersList, PermUsersRead}),
+		allOfRouteSurface("route.settings.usergroups.detail", "/system/user-groups/{id}", "User group", AccessScopeModeGlobalOnly, AllPermissions()),
 		settingsCategorySurface("webhooks", "/system/webhooks", "Webhooks", AccessScopeModeEnvPlusGlobal, []string{PermWebhooksList}),
 		settingsCategorySurface("diagnostics", "/system/diagnostics", "Diagnostics", AccessScopeModeGlobalOnly, []string{PermDiagnosticsRead}),
 		settingsCategorySurface("branding", "/system/branding", "Branding", AccessScopeModeGlobalOnly, []string{PermSettingsUpdate}),

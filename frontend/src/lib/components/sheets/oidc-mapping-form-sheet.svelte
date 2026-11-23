@@ -7,13 +7,14 @@
 	import SheetFooterActions from '#lib/components/sheets/sheet-footer-actions.svelte';
 	import * as ResponsiveDialog from '#lib/components/ui/responsive-dialog/index.js';
 	import { m } from '#lib/paraglide/messages.js';
-	import type { Environment } from '#lib/types/environment.js';
+	import type { Environment, EnvironmentGroupRef } from '#lib/types/environment.js';
 	import type { OidcRoleMapping, Role } from '#lib/types/role.js';
 	import type { OidcRoleMappingWritable } from '#lib/types/ui/role.js';
 	import {
-		buildGlobalEnvironmentOptions,
+		buildRoleScopeOptions,
 		createRoleEnvironmentLabelers,
-		GLOBAL_ENVIRONMENT_OPTION_ID
+		roleScopeFromOptionId,
+		roleScopeOptionId
 	} from '#lib/utils/options.js';
 	import { createForm, preventDefault } from '#lib/utils/settings.svelte.js';
 
@@ -22,28 +23,29 @@
 		mappingToEdit: OidcRoleMapping | null;
 		roles: Role[];
 		environments: Environment[];
+		groups: EnvironmentGroupRef[];
 		isLoading: boolean;
 		onSubmit: (data: Required<Pick<OidcRoleMapping, OidcRoleMappingWritable>>) => void;
 	};
 
-	let { open = $bindable(false), mappingToEdit, roles, environments, isLoading, onSubmit }: Props = $props();
+	let { open = $bindable(false), mappingToEdit, roles, environments, groups, isLoading, onSubmit }: Props = $props();
 
 	const isEditMode = $derived(!!mappingToEdit);
 
-	const envOptions = $derived(buildGlobalEnvironmentOptions(environments, m.global_org_wide()));
+	const envOptions = $derived(buildRoleScopeOptions(environments, groups));
 	const selectedLabel = $derived(createRoleEnvironmentLabelers(roles, envOptions, m.common_select_option()));
 
 	const formSchema = z.object({
 		claimValue: z.string().min(1, m.oidc_mappings_claim_required()),
 		roleId: z.string().min(1, m.oidc_mappings_role_required()),
-		environmentId: z.string()
+		scope: z.string()
 	});
 
 	function formValues() {
 		return {
 			claimValue: mappingToEdit?.claimValue ?? '',
 			roleId: mappingToEdit?.roleId ?? roles[0]?.id ?? '',
-			environmentId: mappingToEdit?.environmentId ?? GLOBAL_ENVIRONMENT_OPTION_ID
+			scope: roleScopeOptionId(mappingToEdit ?? {})
 		};
 	}
 
@@ -52,10 +54,12 @@
 	function handleSubmit() {
 		const data = form.validate();
 		if (!data) return;
+		const scope = roleScopeFromOptionId(data.scope);
 		onSubmit({
 			claimValue: data.claimValue,
 			roleId: data.roleId,
-			environmentId: data.environmentId === GLOBAL_ENVIRONMENT_OPTION_ID ? null : data.environmentId
+			environmentId: scope.environmentId ?? null,
+			environmentGroupId: scope.environmentGroupId ?? null
 		});
 	}
 
@@ -91,7 +95,7 @@
 			{roles}
 			{envOptions}
 			bind:roleValue={form.inputs.roleId.value}
-			bind:environmentValue={form.inputs.environmentId.value}
+			bind:environmentValue={form.inputs.scope.value}
 			roleError={form.inputs.roleId.error}
 			roleSelectedLabel={selectedLabel.role}
 			envSelectedLabel={selectedLabel.environment}

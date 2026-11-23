@@ -1,5 +1,3 @@
-export type UpdateCheckRegistry = 'auto' | 'ghcr.io' | 'docker.io' | 'public.ecr.aws';
-
 export type ProjectsDirectoryEntry = {
 	path: string;
 	enabled: boolean;
@@ -12,19 +10,9 @@ export type Settings = {
 	followProjectSymlinks: boolean;
 	swarmStackSourcesDirectory: string;
 	diskUsagePath: string;
-	autoUpdate: boolean;
-	autoUpdateInterval: number;
-	autoUpdateDelay?: number;
-	autoUpdateExcludedContainers?: string;
-	pollingEnabled: boolean;
-	imageEventWatcherEnabled: boolean;
-	pollingInterval: number;
-	githubToken?: string;
 	dockerClientRefreshInterval?: string;
 	environmentHealthInterval: number;
 	activityHistoryRetentionDays: number;
-	upgradeLogRetentionDays: number;
-	upgradeMaxParallelAgents: number;
 	activityHistoryMaxEntries: number;
 	maxConcurrentActivities: number;
 	defaultDeployPullPolicy: 'missing' | 'always' | 'never';
@@ -69,7 +57,6 @@ export type Settings = {
 	customFaviconHash?: string;
 	customPwaIconHash?: string;
 	apnsEnabled?: boolean;
-	notificationsIncludeReleaseLinks?: boolean;
 	avatarMaxUploadSizeMb: number;
 	allEnvironmentsLimit: number;
 	frontendCacheMinutes: number;
@@ -86,7 +73,6 @@ export type Settings = {
 	authPasswordRequireSymbol: boolean;
 	hstsEnabled: boolean;
 	toolsImageRegistry: 'ghcr.io' | 'docker.io';
-	updateCheckRegistry: UpdateCheckRegistry;
 	trivyDbRegistry: 'ghcr.io' | 'docker.io';
 	trivyNetwork: string;
 	trivySecurityOpts: string;
@@ -107,11 +93,6 @@ export type Settings = {
 	imagePatchAllPlatforms: boolean;
 	imageAutoPatchEnabled: boolean;
 	imageAutoPatchInterval: string;
-	vulnerabilityUpdateGateEnabled?: boolean;
-	vulnerabilityUpdateGateMaxCritical?: number;
-	vulnerabilityUpdateGateMaxHigh?: number;
-	vulnerabilityUpdateGateMaxMedium?: number;
-	vulnerabilityUpdateGateMaxLow?: number;
 	lifecycleEnabled: boolean;
 	lifecycleDefaultRunnerImage: string;
 	lifecycleMaxTimeoutSec: number;

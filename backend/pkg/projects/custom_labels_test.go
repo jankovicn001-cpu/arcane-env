@@ -6,12 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/stretchr/testify/require"
 
-	updaterlabels "kit.getarcane.app/updater/labels"
-
-	"getarcane.dev/arcane/v3/pkg/imageref"
+	"getarcane.dev/arcane/v3/pkg/selfcontainer"
 	"getarcane.dev/types/v3"
 )
 
@@ -204,206 +201,13 @@ func TestNormalizeProjectTags(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestUpdaterMetadataLabels(t *testing.T) {
-	const content = `x-arcane:
-  icon: alpine
-  updater:
-    enabled: true
-    strategy: tag
-    constraint: "3.x"
-    tag-pattern: 'v?(?P<version>\d+\.\d+\.\d+)'
-services:
-  inherited:
-    image: alpine:3.20.0
-  overridden:
-    image: alpine:3.20.0
-    x-arcane:
-      updater:
-        constraint: "=3.20.1"
-        enabled: false
-  explicit:
-    image: alpine:3.20.0
-    x-arcane:
-      updater:
-        constraint: "=3.20.1"
-    labels:
-      com.getarcaneapp.arcane.updater.strategy: digest
-      com.getarcaneapp.arcane.updater.constraint: ""
-      custom: keep
-`
+func TestHiddenMetadataInterpolationAndIncludes(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "compose.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-	disk, err := LoadComposeProject(t.Context(), LoadOptions{
-		ComposeFile:       path,
-		ProjectName:       "metadata",
-		ProjectsDirectory: dir,
-	})
-	require.NoError(t, err)
-	memory, err := LoadComposeProjectFromContent(t.Context(), types.ComposeContentOptions{ComposeContent: content, WorkingDir: dir, ProjectName: "metadata"})
-	require.NoError(t, err)
-	for _, project := range []*composetypes.Project{disk, memory} {
-		inherited := project.Services["inherited"].Labels
-		require.Equal(t, "tag", inherited[updaterlabels.LabelUpdateStrategy])
-		require.Equal(t, "3.x", inherited[updaterlabels.LabelUpdateConstraint])
-		require.Equal(t, "true", inherited[updaterlabels.LabelUpdater])
-		overridden := project.Services["overridden"].Labels
-		require.Equal(t, "=3.20.1", overridden[updaterlabels.LabelUpdateConstraint])
-		require.Equal(t, "false", overridden[updaterlabels.LabelUpdater])
-		require.Equal(t, inherited[updaterlabels.LabelUpdateTagPattern], overridden[updaterlabels.LabelUpdateTagPattern])
-		explicit := project.Services["explicit"].Labels
-		require.Equal(t, "digest", explicit[updaterlabels.LabelUpdateStrategy])
-		require.Empty(t, explicit[updaterlabels.LabelUpdateConstraint])
-		require.Equal(t, "keep", explicit["custom"])
-	}
-	source, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, content, string(source), "loading must not rewrite source into labels")
-}
-
-func TestUpdaterMetadataValidation(t *testing.T) {
-	for _, config := range []string{
-		"updater: true",
-		"updater: {enabled: maybe}",
-		"updater: {strategy: newest}",
-		"updater: {constraint: 123}",
-		"updater: {tag-pattern: []}",
-		"updater: {unknown: true}",
-	} {
-		t.Run(config, func(t *testing.T) {
-			_, err := LoadComposeProjectFromContent(
-				t.Context(),
-				types.ComposeContentOptions{
-					ComposeContent: "services:\n  app:\n    image: alpine:3.20.0\nx-arcane:\n  " + config + "\n",
-					WorkingDir:     t.TempDir(),
-					ProjectName:    "metadata",
-				},
-			)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "updater")
-		})
-	}
-}
-
-func TestUpdateCheckMetadataLabels(t *testing.T) {
-	const content = `x-arcane:
-  update-check: false
-services:
-  inherited:
-    image: alpine:3.20.0
-  overridden:
-    image: alpine:3.20.0
-    x-arcane:
-      update-check: true
-  explicit:
-    image: alpine:3.20.0
-    labels:
-      com.getarcaneapp.arcane.update-check: "true"
-`
-	dir := t.TempDir()
-	path := filepath.Join(dir, "compose.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-	disk, err := LoadComposeProject(t.Context(), LoadOptions{
-		ComposeFile:       path,
-		ProjectName:       "metadata",
-		ProjectsDirectory: dir,
-	})
-	require.NoError(t, err)
-	memory, err := LoadComposeProjectFromContent(
-		t.Context(),
-		types.ComposeContentOptions{
-			ComposeContent: content,
-			WorkingDir:     dir,
-			ProjectName:    "metadata",
-		},
-	)
-	require.NoError(t, err)
-	for _, project := range []*composetypes.Project{disk, memory} {
-		require.Equal(t, "false", project.Services["inherited"].Labels[imageref.UpdateCheckLabel])
-		require.Equal(t, "true", project.Services["overridden"].Labels[imageref.UpdateCheckLabel])
-		require.Equal(t, "true", project.Services["explicit"].Labels[imageref.UpdateCheckLabel])
-	}
-}
-
-func TestUpdateCheckMetadataValidation(t *testing.T) {
-	for _, content := range []string{
-		"services:\n  app:\n    image: alpine:3.20.0\nx-arcane:\n  update-check: maybe\n",
-		"services:\n  app:\n    image: alpine:3.20.0\n    x-arcane:\n      update-check: maybe\n",
-	} {
-		t.Run(content, func(t *testing.T) {
-			_, err := LoadComposeProjectFromContent(
-				t.Context(),
-				types.ComposeContentOptions{
-					ComposeContent: content,
-					WorkingDir:     t.TempDir(),
-					ProjectName:    "metadata",
-				},
-			)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "update-check")
-		})
-	}
-}
-
-func TestUpdaterDelayMetadataLabels(t *testing.T) {
-	const content = `x-arcane:
-  updater:
-    delay: 72
-services:
-  inherited:
-    image: alpine:3.20.0
-  immediate:
-    image: alpine:3.20.0
-    x-arcane:
-      updater:
-        delay: 0
-  quoted:
-    image: alpine:3.20.0
-    x-arcane:
-      updater:
-        delay: "12"
-`
-	project, err := LoadComposeProjectFromContent(
-		t.Context(),
-		types.ComposeContentOptions{
-			ComposeContent: content,
-			WorkingDir:     t.TempDir(),
-			ProjectName:    "metadata",
-		},
-	)
-	require.NoError(t, err)
-	require.Equal(t, "72", project.Services["inherited"].Labels[imageref.UpdateDelayLabel])
-	require.Equal(t, "0", project.Services["immediate"].Labels[imageref.UpdateDelayLabel])
-	require.Equal(t, "12", project.Services["quoted"].Labels[imageref.UpdateDelayLabel])
-}
-
-func TestUpdaterDelayMetadataValidation(t *testing.T) {
-	for _, delay := range []string{"-1", "1.5", "soon", "[]", "8761"} {
-		t.Run(delay, func(t *testing.T) {
-			_, err := LoadComposeProjectFromContent(
-				t.Context(),
-				types.ComposeContentOptions{
-					ComposeContent: "services:\n  app:\n    image: alpine:3.20.0\n    x-arcane:\n      updater:\n        delay: " + delay + "\n",
-					WorkingDir:     t.TempDir(),
-					ProjectName:    "metadata",
-				},
-			)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "updater delay must be a whole number of hours between 0 and 8760")
-		})
-	}
-}
-
-func TestUpdaterMetadataInterpolationAndIncludes(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte("UPDATE_RANGE=3.20.x\nUPDATE_ENABLED=false\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte("HIDE_MAIN=true\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(`include:
   - included.yaml
 x-arcane:
-  updater:
-    strategy: tag
-    constraint: "${UPDATE_RANGE}"
-    enabled: "${UPDATE_ENABLED}"
+  hidden: "${HIDE_MAIN}"
 services:
   main:
     image: alpine:3.20.0
@@ -412,9 +216,7 @@ services:
   child:
     image: alpine:3.20.0
     x-arcane:
-      updater:
-        enabled: true
-        constraint: "=3.20.1"
+      hidden: false
 `), 0o600))
 	project, err := LoadComposeProject(t.Context(), LoadOptions{
 		ComposeFile:       filepath.Join(dir, "compose.yaml"),
@@ -422,9 +224,6 @@ services:
 		ProjectsDirectory: dir,
 	})
 	require.NoError(t, err)
-	require.Equal(t, "3.20.x", project.Services["main"].Labels[updaterlabels.LabelUpdateConstraint])
-	require.Equal(t, "false", project.Services["main"].Labels[updaterlabels.LabelUpdater])
-	require.Equal(t, "tag", project.Services["child"].Labels[updaterlabels.LabelUpdateStrategy])
-	require.Equal(t, "=3.20.1", project.Services["child"].Labels[updaterlabels.LabelUpdateConstraint])
-	require.Equal(t, "true", project.Services["child"].Labels[updaterlabels.LabelUpdater])
+	require.Equal(t, "true", project.Services["main"].Labels[selfcontainer.HiddenResourceLabel])
+	require.Equal(t, "false", project.Services["child"].Labels[selfcontainer.HiddenResourceLabel])
 }
